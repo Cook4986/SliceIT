@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /* === 90s "Bop It" Inspired Fonts === */
-@import url('https://fonts.googleapis.com/css2?family=Titan+One&family=Poppins:wght@400;700;900&family=JetBrains+Mono:wght@400;700;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fredoka+One&family=Rubik:wght@700;900&family=JetBrains+Mono:wght@700;900&display=swap');
 
 /* === Bop It Design Tokens === */
 :root {
@@ -16,8 +16,8 @@
   --color-text-primary: #FFFFFF;
   --color-text-dark: #1E1B4B;
   
-  --font-logo: 'Titan One', cursive;
-  --font-ui: 'Poppins', sans-serif;
+  --font-logo: 'Fredoka One', cursive;
+  --font-ui: 'Rubik', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
 
   --shadow-retro: 4px 4px 0px rgba(0,0,0,0.3);

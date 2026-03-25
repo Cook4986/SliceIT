@@ -33,7 +33,7 @@ export function FloatingInspector() {
         boxShadow: '8px 8px 0px #F472B6',
       }}
     >
-      <div className="flex flex-col gap-3 font-bop min-w-[150px]">
+      <div className="flex flex-col gap-3 min-w-[150px]" style={{ fontFamily: 'var(--font-logo)' }}>
         {activeTool ? (
           <>
             <div className="text-center text-[#E800A6] mb-2 font-black tracking-widest text-lg" style={{ WebkitTextStroke: '1px #00FFFF' }}>
