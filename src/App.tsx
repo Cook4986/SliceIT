@@ -8,6 +8,7 @@ import { ToastContainer } from './components/ToastContainer';
 import { StatusBar } from './components/StatusBar';
 import { FloatingInspector } from './components/FloatingInspector';
 import { DebugConsole } from './components/DebugConsole';
+import { ExportModal } from './components/ExportModal';
 
 export default function App() {
   const hasModel = useStore(s => s.model.geometry !== null);
@@ -29,6 +30,7 @@ export default function App() {
       <ToastContainer />
       <FloatingInspector />
       <DebugConsole />
+      <ExportModal />
     </div>
   );
 }
