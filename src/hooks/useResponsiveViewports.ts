@@ -3,17 +3,7 @@ import type { ViewConfig } from '../types/store';
 import { VIEW_CONFIGS } from '../config/viewConfigs';
 
 /**
- * Dynamic viewport scaling rules:
- * 
- * | Window Width   | Viewports | Grid    | Views Selected                        |
- * |----------------|-----------|---------|---------------------------------------|
- * | < 600px        | 1         | 1×1     | Iso 1 (index 6)                       |
- * | 600–999px      | 2         | 2×1     | Top (0), Iso 1 (6)                    |
- * | 1000–1399px    | 4         | 2×2     | Top (0), Front (1), Right (2), Iso 1  |
- * | ≥ 1400px       | 9         | 3×3     | All views                             |
- * 
- * Priority order: Iso perspectives are most useful for general inspection,
- * ortho views add precision as screen real estate permits.
+ * Dynamic viewport scaling rules using Iso 2 (index 0) as the anchor.
  */
 
 interface ViewportLayout {
@@ -23,11 +13,16 @@ interface ViewportLayout {
   rows: number;
 }
 
+// Iso 2 is at VIEW_CONFIGS[0]
 const LAYOUT_RULES: { minWidth: number; indices: number[]; columns: number; rows: number }[] = [
-  { minWidth: 1400, indices: [0, 1, 2, 3, 4, 5, 6, 7, 8], columns: 3, rows: 3 },
-  { minWidth: 1000, indices: [0, 1, 2, 6],                 columns: 2, rows: 2 },
-  { minWidth: 600,  indices: [0, 6],                       columns: 2, rows: 1 },
-  { minWidth: 0,    indices: [6],                          columns: 1, rows: 1 },
+  // 9 views: Iso 2 is the exact center (index 4 in the grid)
+  { minWidth: 1400, indices: [1, 2, 3, 6, 0, 4, 7, 5, 8], columns: 3, rows: 3 },
+  // 4 views: Iso 2 is in the bottom-right
+  { minWidth: 1000, indices: [1, 2, 3, 0], columns: 2, rows: 2 },
+  // 2 views: Iso 2 is the right-hand view
+  { minWidth: 600,  indices: [1, 0], columns: 2, rows: 1 },
+  // 1 view: Iso 2 is the only view (Mobile)
+  { minWidth: 0,    indices: [0], columns: 1, rows: 1 },
 ];
 
 function getLayout(width: number): ViewportLayout {
@@ -41,8 +36,7 @@ function getLayout(width: number): ViewportLayout {
       };
     }
   }
-  // Fallback
-  return { configs: [VIEW_CONFIGS[6]], indices: [6], columns: 1, rows: 1 };
+  return { configs: [VIEW_CONFIGS[0]], indices: [0], columns: 1, rows: 1 };
 }
 
 export function useResponsiveViewports(): ViewportLayout {
@@ -56,7 +50,6 @@ export function useResponsiveViewports(): ViewportLayout {
     }
 
     window.addEventListener('resize', handleResize);
-    // Run once on mount to get initial size
     handleResize();
     return () => window.removeEventListener('resize', handleResize);
   }, []);

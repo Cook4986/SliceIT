@@ -7,6 +7,7 @@ import { FileDropZone } from './components/FileDropZone';
 import { ToastContainer } from './components/ToastContainer';
 import { StatusBar } from './components/StatusBar';
 import { FloatingInspector } from './components/FloatingInspector';
+import { DebugConsole } from './components/DebugConsole';
 
 export default function App() {
   const hasModel = useStore(s => s.model.geometry !== null);
@@ -27,6 +28,7 @@ export default function App() {
       <FileDropZone />
       <ToastContainer />
       <FloatingInspector />
+      <DebugConsole />
     </div>
   );
 }

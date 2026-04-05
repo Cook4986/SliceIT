@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /* === 90s "Bop It" Inspired Fonts === */
-@import url('https://fonts.googleapis.com/css2?family=Bungee&family=Rubik:wght@700;900&family=JetBrains+Mono:wght@700;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Luckiest+Guy&family=Titan+One&family=Fredoka:wght@600;700&family=JetBrains+Mono:wght@700;900&display=swap');
 
 /* === Bop It Design Tokens === */
 :root {
@@ -16,8 +16,9 @@
   --color-text-primary: #FFFFFF;
   --color-text-dark: #1E1B4B;
   
-  --font-logo: 'Bungee', cursive;
-  --font-ui: 'Rubik', sans-serif;
+  --font-logo: 'Luckiest Guy', system-ui;
+  --font-heading: 'Titan One', system-ui;
+  --font-ui: 'Fredoka', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
 
   --shadow-retro: 4px 4px 0px rgba(0,0,0,0.3);
@@ -39,8 +40,11 @@ html, body, #root {
   font-weight: 700;
   background: var(--color-bg-main);
   background-image: 
-    radial-gradient(circle at 20% 20%, rgba(34, 211, 238, 0.05) 0%, transparent 40%),
-    radial-gradient(circle at 80% 80%, rgba(244, 114, 182, 0.05) 0%, transparent 40%);
+    radial-gradient(circle at 20% 20%, rgba(34, 211, 238, 0.1) 0%, transparent 40%),
+    radial-gradient(circle at 80% 80%, rgba(244, 114, 182, 0.1) 0%, transparent 40%),
+    /* Memphis Dots */
+    radial-gradient(rgba(255,255,255,0.03) 1px, transparent 0);
+  background-size: 100% 100%, 100% 100%, 30px 30px;
   color: var(--color-text-primary);
   -webkit-font-smoothing: antialiased;
 }
@@ -109,23 +113,28 @@ html, body, #root {
 
 .logo {
   font-family: var(--font-logo);
-  font-size: 32px;
+  font-size: 36px;
   color: var(--color-accent-yellow);
-  text-shadow: 3px 3px 0 #1E1B4B, -1px -1px 0 #1E1B4B;
+  /* Radical 3D Stacked Text Shadow */
+  text-shadow: 
+    2px 2px 0px var(--color-accent-pink),
+    4px 4px 0px var(--color-accent-cyan),
+    6px 6px 0px #1E1B4B;
   display: flex;
   align-items: center;
-  gap: 12px;
-  transform: rotate(-2deg);
+  gap: 8px;
+  transform: rotate(-1deg);
+  letter-spacing: 1px;
 }
 
-.logo span {
+.logo-char {
   display: inline-block;
-  animation: logo-bounce 2s infinite ease-in-out;
+  animation: logo-bounce 1.5s infinite ease-in-out;
 }
 
 @keyframes logo-bounce {
-  0%, 100% { transform: translateY(0) rotate(-2deg); }
-  50% { transform: translateY(-5px) rotate(2deg); }
+  0%, 100% { transform: translateY(0) rotate(-10deg) scale(1.1); }
+  50% { transform: translateY(-8px) rotate(10deg) scale(1.2); }
 }
 
 /* === Toolbar === */
@@ -176,16 +185,17 @@ html, body, #root {
 /* === Bop It "Slice It!" Button === */
 .slice-btn {
   font-family: var(--font-logo);
-  font-size: 18px;
+  font-size: 20px;
   background: var(--color-accent-pink);
   color: white;
-  padding: 8px 24px;
+  padding: 10px 28px;
   border-radius: 50px;
   border: 4px solid #1E1B4B;
-  box-shadow: 0 4px 0 #1E1B4B;
+  box-shadow: 4px 4px 0 #1E1B4B;
   cursor: pointer;
   text-transform: uppercase;
   transition: all 100ms;
+  letter-spacing: 1px;
 }
 
 .slice-btn:hover {
@@ -235,7 +245,40 @@ html, body, #root {
   background: var(--color-bg-main);
   background-image: 
     radial-gradient(circle at 50% 50%, #3B20A1 0%, #2D1B69 100%),
-    repeating-linear-gradient(45deg, transparent, transparent 20px, rgba(0,0,0,0.05) 20px, rgba(0,0,0,0.05) 40px);
+    /* Memphis Dots */
+    radial-gradient(rgba(255,255,255,0.05) 2px, transparent 0),
+    /* Memphis Squiggles / Lines */
+    repeating-linear-gradient(45deg, transparent, transparent 18px, rgba(34, 211, 238, 0.03) 18px, rgba(34, 211, 238, 0.03) 20px),
+    repeating-linear-gradient(-45deg, transparent, transparent 18px, rgba(244, 114, 182, 0.03) 18px, rgba(244, 114, 182, 0.03) 20px);
+  background-size: 100% 100%, 40px 40px, 100% 100%, 100% 100%;
+}
+
+.preset-btn {
+  font-family: var(--font-logo);
+  padding: 12px 24px;
+  border: 4px solid #1E1B4B;
+  border-radius: 12px;
+  color: #1E1B4B;
+  cursor: pointer;
+  box-shadow: 4px 4px 0px #1E1B4B;
+  transition: all 100ms;
+  text-transform: uppercase;
+}
+
+.preset-btn:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0px #1E1B4B;
+}
+
+.preset-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0px 0px 0px #1E1B4B;
+}
+
+.drop-zone h2 {
+  font-family: var(--font-heading) !important;
+  letter-spacing: 2px;
+  text-shadow: 2px 2px 0px rgba(0,0,0,0.5);
 }
 
 .drop-zone {

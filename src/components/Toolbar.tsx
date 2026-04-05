@@ -23,21 +23,18 @@ export function Toolbar() {
     if (file) {
       await importModel(file);
     }
-    // Reset input so same file can be re-selected
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const tools: { type: ToolType; icon: string; label: string; shortcut: string }[] = [
-    { type: 'box', icon: '📦', label: 'Bop It! (Box)', shortcut: 'B' },
-    { type: 'sphere', icon: '🎾', label: 'Bop It! (Sphere)', shortcut: 'S' },
-    { type: 'plane', icon: '📏', label: 'Bop It! (Plane)', shortcut: 'P' },
     { type: 'knife', icon: '🔪', label: 'Flick It!', shortcut: 'K' },
-    { type: 'lasso', icon: '➰', label: 'Spin It!', shortcut: 'L' },
+    { type: 'lasso', icon: '🪢', label: 'Lasso It!', shortcut: 'L' },
+    { type: 'box', icon: '📦', label: 'Box It!', shortcut: 'B' },
+    { type: 'sphere', icon: '⚽', label: 'Ball It!', shortcut: 'S' },
   ];
 
   return (
     <div className="toolbar">
-      {/* File Operations */}
       <input
         ref={fileInputRef}
         type="file"
@@ -50,7 +47,7 @@ export function Toolbar() {
         title="Load It!"
         onClick={() => fileInputRef.current?.click()}
       >
-        📂
+        <span style={{ fontSize: '20px' }}>📂</span>
       </button>
       <button
         className="tool-btn"
@@ -58,12 +55,11 @@ export function Toolbar() {
         disabled={!hasModel}
         onClick={() => setUIState({ showExportModal: true })}
       >
-        💾
+        <span style={{ fontSize: '20px' }}>💾</span>
       </button>
 
       <div className="tool-separator" />
 
-      {/* Cutting Tools */}
       {tools.map(t => (
         <button
           key={t.type}
@@ -72,37 +68,29 @@ export function Toolbar() {
           disabled={!hasModel}
           onClick={() => setActiveTool(activeTool === t.type ? null : t.type)}
         >
-          {t.icon}
+          <span style={{ fontSize: '22px' }}>{t.icon}</span>
         </button>
       ))}
 
       <div className="tool-separator" />
 
-      {/* Slice! */}
       <button
         className={`slice-btn ${isSlicing ? 'slicing' : ''}`}
         disabled={!hasModel || !activeTool || isSlicing}
         onClick={() => executeSlice()}
       >
-        {isSlicing ? '⏳' : '✅'} Slice It!
+        {isSlicing ? '⏳ ' : ''}SLICE IT!
       </button>
 
       <div className="tool-separator" />
 
-      {/* Transform Modes moved to separate tooltips or kept? 
-          The user said "remove corresponding controls from header UI" 
-          but then said "support click/drag in window".
-          I'll remove them from here.
-      */}
-
-      {/* Undo / Redo */}
       <button
         className="tool-btn"
         title="Reverse It!"
         disabled={undoCount === 0}
         onClick={() => undo()}
       >
-        ↩️
+        <span style={{ fontSize: '20px' }}>↩️</span>
       </button>
       <button
         className="tool-btn"
@@ -110,7 +98,7 @@ export function Toolbar() {
         disabled={redoCount === 0}
         onClick={() => redo()}
       >
-        ↪️
+        <span style={{ fontSize: '20px' }}>↪️</span>
       </button>
     </div>
   );

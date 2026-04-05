@@ -25,10 +25,10 @@ export function EmptyState() {
         onClick={() => document.getElementById('main-import')?.click()}
       >
         <div className="drop-zone-icon">📥</div>
-        <h2 style={{ fontFamily: 'var(--font-logo)', color: 'var(--color-accent-yellow)', margin: '16px 0' }}>
+        <h2 style={{ fontFamily: 'var(--font-logo)', color: 'var(--color-accent-yellow)', margin: '16px 0', fontSize: '24px' }}>
           LOAD IT!
         </h2>
-        <p style={{ color: 'var(--color-text-secondary)', textAlign: 'center', maxWidth: '300px' }}>
+        <p style={{ color: 'rgba(255,255,255,0.7)', textAlign: 'center', maxWidth: '300px', fontSize: '12px' }}>
           DROP AN STL, OBJ, OR GLB FILE HERE TO START SLICING!
         </p>
         
@@ -42,14 +42,16 @@ export function EmptyState() {
         />
       </div>
 
-      <div style={{ marginTop: '32px', display: 'flex', gap: '16px' }}>
-        <div style={{ background: '#3B20A1', padding: '12px 24px', borderRadius: '24px', border: '3px solid #1E1B4B' }}>
-          <span style={{ color: 'var(--color-accent-lime)', fontWeight: 900 }}>3D MESH</span>
-        </div>
-        <div style={{ background: '#3B20A1', padding: '12px 24px', borderRadius: '24px', border: '3px solid #1E1B4B' }}>
-          <span style={{ color: 'var(--color-accent-cyan)', fontWeight: 900 }}>POINT CLOUD</span>
-        </div>
+      <div style={{ display: 'flex', gap: '16px', marginTop: '32px' }}>
+        <button 
+          className="preset-btn"
+          style={{ background: 'var(--color-accent-cyan)' }}
+          onClick={() => useStore.getState().loadPreset('box')}
+        >
+          Bop It! (Box)
+        </button>
       </div>
+
     </div>
   );
 }

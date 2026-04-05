@@ -3,6 +3,7 @@ import { ViewCamera } from './ViewCamera';
 import { ViewHelpers } from './ViewHelpers';
 import { ModelRenderer } from './ModelRenderer';
 import { CuttingTool } from './tools/CuttingTool';
+import { CuttingPlane } from './tools/CuttingPlane';
 import { PointerTracker, PointerRenderer } from './tools/CrossViewportPointer';
 
 interface ViewSceneProps {
@@ -17,7 +18,8 @@ export function ViewScene({ viewIndex, config, isActive }: ViewSceneProps) {
       <ViewCamera config={config} viewIndex={viewIndex} />
       <ViewHelpers config={config} />
       <ModelRenderer />
-      <CuttingTool />
+      <CuttingTool isActive={isActive} />
+      <CuttingPlane isActive={isActive} />
       <PointerTracker isActive={isActive} />
       <PointerRenderer />
 

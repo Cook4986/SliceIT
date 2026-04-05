@@ -13,6 +13,8 @@ export function StatusBar() {
   const activeTool = useStore(s => s.tool.activeTool);
   const isSlicing = useStore(s => s.operation.isSlicing);
   const statusText = useStore(s => s.operation.statusText);
+  const isDrawingComplete = useStore(s => s.tool.isDrawingComplete);
+  const pointCount = useStore(s => s.tool.points.length);
 
   const activeConfig = VIEW_CONFIGS[activeViewIndex];
 
@@ -47,6 +49,11 @@ export function StatusBar() {
         {activeTool && !isSlicing && (
           <span>
             {activeTool.toUpperCase()} MODE
+            {(activeTool === 'knife' || activeTool === 'lasso') && (
+              <span style={{ color: 'var(--color-accent-cyan)', marginLeft: 8 }}>
+                {isDrawingComplete ? '✓ READY TO SLICE' : `${pointCount}/${activeTool === 'knife' ? 3 : '3+'} pts`}
+              </span>
+            )}
           </span>
         )}
         {!activeTool && !isSlicing && (

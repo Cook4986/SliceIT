@@ -1,12 +1,17 @@
 import type { ViewConfig } from '../types/store';
 
 /**
- * Camera configurations for all 9 viewports.
- * Position values are direction vectors — they get multiplied
- * by the bounding-sphere-derived distance D at runtime.
+ * Camera configurations for all viewports.
+ * Iso 2 (index 0) is the primary window for mobile and center for 3x3.
  */
 export const VIEW_CONFIGS: ViewConfig[] = [
-  // Row 1: Top, Front, Right (Orthographic)
+  {
+    label: 'Iso 2', // Primary Centerpiece
+    cameraType: 'perspective',
+    position: [1, 1, 1],
+    up: [0, 1, 0],
+    orbitEnabled: true,
+  },
   {
     label: 'Top',
     cameraType: 'orthographic',
@@ -28,8 +33,6 @@ export const VIEW_CONFIGS: ViewConfig[] = [
     up: [0, 1, 0],
     orbitEnabled: false,
   },
-
-  // Row 2: Bottom, Back, Left (Orthographic)
   {
     label: 'Bottom',
     cameraType: 'orthographic',
@@ -51,17 +54,8 @@ export const VIEW_CONFIGS: ViewConfig[] = [
     up: [0, 1, 0],
     orbitEnabled: false,
   },
-
-  // Row 3: Iso 1, Iso 2, Iso 3 (Perspective)
   {
     label: 'Iso 1',
-    cameraType: 'perspective',
-    position: [1, 1, 1],
-    up: [0, 1, 0],
-    orbitEnabled: true,
-  },
-  {
-    label: 'Iso 2',
     cameraType: 'perspective',
     position: [-1, 1, 1],
     up: [0, 1, 0],

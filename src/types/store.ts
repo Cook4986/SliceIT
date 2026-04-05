@@ -72,6 +72,14 @@ export interface ToolState {
 
   /** Whether the drawing is complete (closed polygon) */
   isDrawingComplete: boolean;
+  /** 3D points for cutting tool (Knife=2+, Lasso=3+) */
+  points: [number, number, number][];
+  /** Normal of the cut plane */
+  planeNormal: [number, number, number];
+  /** Position/Center of the cut plane */
+  planePosition: [number, number, number];
+  /** -1: not placing, 0+: index of point currently following mouse */
+  placementIndex: number;
 }
 
 // ============================================================
@@ -143,6 +151,7 @@ export interface UIState {
   floatingInspectorPos: [number, number];
   showExportModal: boolean;
   showSettings: boolean;
+  showDebugConsole: boolean;
 }
 
 // ============================================================
@@ -154,30 +163,37 @@ export interface SliceItStore {
   model: ModelState;
   tool: ToolState;
   activeViewIndex: number;
-  cameraSync: { target: [number, number, number], zoom: number };
-  setCameraSync: (state: Partial<{ target: [number, number, number], zoom: number }>) => void;
+  setActiveViewIndex: (index: number, remote?: boolean) => void;
+  cameraSync: { target: [number, number, number], zoomScale: number };
+  setCameraSync: (state: Partial<{ target: [number, number, number], zoomScale: number }>, remote?: boolean) => void;
   sharedPointer: [number, number, number] | null;
-  setSharedPointer: (pos: [number, number, number] | null) => void;
+  setSharedPointer: (pos: [number, number, number] | null, remote?: boolean) => void;
   viewConfigs: ViewConfig[];
   operation: OperationState;
   undoStack: HistoryEntry[];
   redoStack: HistoryEntry[];
   toasts: ToastMessage[];
+  logs: string[];
   ui: UIState;
 
   // --- Model Actions ---
   importModel: (file: File) => Promise<void>;
   exportModel: (format: ExportFormat) => void;
+  loadPreset: (type: 'box' | 'sphere', remote?: boolean) => void;
   clearModel: () => void;
 
   // --- View Actions ---
   setActiveView: (index: number) => void;
+  resetCameras: () => void;
 
   // --- Tool Actions ---
   setActiveTool: (tool: ToolType | null) => void;
   setTransformMode: (mode: TransformMode) => void;
   updateToolTransform: (transform: Partial<ToolTransform>) => void;
   addDrawingPoint: (point: [number, number]) => void;
+  updatePoint: (index: number, pos: [number, number, number]) => void;
+  addAnchor: (pos: [number, number, number]) => void;
+  updatePlaneNormal: (normal: [number, number, number]) => void;
   completeDrawing: () => void;
   cancelDrawing: () => void;
 
@@ -194,4 +210,8 @@ export interface SliceItStore {
 
   // --- UI Actions ---
   setUIState: (state: Partial<UIState>) => void;
+
+  // --- Log Actions ---
+  addLog: (msg: string) => void;
+  clearLogs: () => void;
 }

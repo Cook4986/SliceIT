@@ -5,27 +5,39 @@ import { useStore } from '../../store/useStore';
 import { BoxCutter } from './BoxCutter';
 import { SphereCutter } from './SphereCutter';
 import { PlaneCutter } from './PlaneCutter';
+import { useThree } from '@react-three/fiber';
 
 /**
- * Main CuttingTool component that renders the active primitive
- * and handles TransformControls interaction.
+ * Main CuttingTool component for primitives (Box, Sphere, Plane).
  */
-export function CuttingTool() {
+export function CuttingTool({ isActive }: { isActive: boolean }) {
   const activeTool = useStore(s => s.tool.activeTool);
   const transformMode = useStore(s => s.tool.transformMode);
   const toolTransform = useStore(s => s.tool.transform);
   const updateToolTransform = useStore(s => s.updateToolTransform);
+  const setTransformMode = useStore(s => s.setTransformMode);
   
+  const { invalidate } = useThree();
   const groupRef = useRef<THREE.Group>(null);
 
-  // Synchronize store transform to local group
+  // Mode switching
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+        const key = e.key.toLowerCase();
+        if (key === 'w') setTransformMode('translate');
+        if (key === 'e') setTransformMode('rotate');
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [setTransformMode]);
+
   useEffect(() => {
     if (groupRef.current) {
       groupRef.current.position.set(...toolTransform.position);
       groupRef.current.rotation.set(...toolTransform.rotation);
       groupRef.current.scale.set(...toolTransform.scale);
     }
-  }, [activeTool]); // Only on tool change to avoid loop, or handled by controls
+  }, [activeTool]); 
 
   if (!activeTool || activeTool === 'knife' || activeTool === 'lasso') {
     return null;
@@ -33,32 +45,30 @@ export function CuttingTool() {
 
   const handleTransformChange = () => {
     if (groupRef.current) {
-      const position = groupRef.current.position.toArray() as [number, number, number];
-      const rotation = [
-        groupRef.current.rotation.x,
-        groupRef.current.rotation.y,
-        groupRef.current.rotation.z,
-      ] as [number, number, number];
-      const scale = groupRef.current.scale.toArray() as [number, number, number];
-
-      updateToolTransform({ position, rotation, scale });
+      updateToolTransform({ 
+        position: groupRef.current.position.toArray() as [number, number, number],
+        rotation: [groupRef.current.rotation.x, groupRef.current.rotation.y, groupRef.current.rotation.z] as [number, number, number],
+        scale: groupRef.current.scale.toArray() as [number, number, number]
+      });
+      invalidate();
     }
   };
 
   return (
     <>
-      <group ref={groupRef} onPointerOver={() => {}}>
+      <group ref={groupRef}>
         {activeTool === 'box' && <BoxCutter />}
         {activeTool === 'sphere' && <SphereCutter />}
         {activeTool === 'plane' && <PlaneCutter />}
       </group>
 
-      <TransformControls
-        object={groupRef.current || undefined}
-        mode={transformMode}
-        onMouseUp={handleTransformChange}
-        // Disable orbit controls while transforming (usually handled by Drei)
-      />
+      {isActive && groupRef.current && (
+        <TransformControls
+          object={groupRef.current}
+          mode={transformMode}
+          onObjectChange={handleTransformChange}
+        />
+      )}
     </>
   );
 }
