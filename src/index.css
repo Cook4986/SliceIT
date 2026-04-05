@@ -1,7 +1,7 @@
-@import "tailwindcss";
-
 /* === 90s "Bop It" Inspired Fonts === */
 @import url('https://fonts.googleapis.com/css2?family=Luckiest+Guy&family=Titan+One&family=Fredoka:wght@600;700&family=JetBrains+Mono:wght@700;900&display=swap');
+
+@import "tailwindcss";
 
 /* === Bop It Design Tokens === */
 :root {

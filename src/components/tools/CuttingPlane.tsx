@@ -21,7 +21,6 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
   const updatePoint = useStore(s => s.updatePoint);
   const setTransformMode = useStore(s => s.setTransformMode);
   
-  const { invalidate } = useThree();
   const [activeHandleIndex, setActiveHandleIndex] = useState<number | 'plane' | null>(null);
 
   const isKnifeOrLasso = activeTool === 'knife' || activeTool === 'lasso';
