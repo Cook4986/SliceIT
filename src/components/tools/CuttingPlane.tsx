@@ -312,7 +312,7 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
       )}
 
       {/* ── Stage 3: Deployed plane + TransformControls ─────────────────── */}
-      {isDrawingComplete && vectorPoints.length >= 3 && (
+      {isDrawingComplete && vectorPoints.length >= 2 && (
         <group>
           {activeTool === 'knife' ? (
             <PlaneSurface

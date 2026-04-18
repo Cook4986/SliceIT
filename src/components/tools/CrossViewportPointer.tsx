@@ -17,7 +17,11 @@ export function PointerTracker({ isActive }: { isActive: boolean }) {
     if (prevMouse.current.distanceToSquared(mouse) < 0.0001) return;
     prevMouse.current.copy(mouse);
 
-    const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+    // Build the raycast plane perpendicular to the camera's view direction.
+    // This ensures pointer tracking works in ALL viewport orientations
+    // (Top, Right, Back, etc.), not just front-facing cameras.
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
+    const plane = new THREE.Plane(forward, 0); // through origin, facing camera
     const target = new THREE.Vector3();
     raycaster.setFromCamera(mouse, camera);
     const hit = raycaster.ray.intersectPlane(plane, target);

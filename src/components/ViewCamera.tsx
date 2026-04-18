@@ -185,9 +185,13 @@ export function ViewCamera({ config, viewIndex }: ViewCameraProps) {
             if (state.tool.activeTool === 'knife' || state.tool.activeTool === 'lasso') {
                 // Always consume the click when a drawing tool is active
                 e.stopPropagation();
-                if (state.tool.placementIndex !== -1 && state.sharedPointer) {
+                if (state.tool.placementIndex !== -1) {
+                    // Use the intersection point directly from the R3F event.
+                    // sharedPointer may be stale if this viewport wasn't active yet.
+                    const pt: [number, number, number] = [e.point.x, e.point.y, e.point.z];
+                    state.setSharedPointer(pt);
                     state.setActiveViewIndex(viewIndex);
-                    state.addAnchor(state.sharedPointer);
+                    state.addAnchor(pt);
                 }
             }
         }}
