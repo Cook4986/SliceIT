@@ -26,6 +26,7 @@ export function CuttingTool({ isActive }: { isActive: boolean }) {
         const key = e.key.toLowerCase();
         if (key === 'w') setTransformMode('translate');
         if (key === 'e') setTransformMode('rotate');
+        if (key === 'r') setTransformMode('scale');
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);

@@ -217,38 +217,6 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
         </>
       )}
 
-      {/* ── Stage 1: Sizing preview (P1 locked, cursor = diagonal corner) ── */}
-      {!isDrawingComplete && activeTool === 'knife' && lockedCount === 1 && vectorPoints.length >= 2 && (
-        <group>
-          <mesh position={previewCenter} quaternion={previewQuaternion}>
-            <planeGeometry args={[previewSize, previewSize]} />
-            <meshStandardMaterial
-              color={COLORS.accent.cyan}
-              transparent opacity={0.06}
-              side={THREE.DoubleSide} depthWrite={false}
-            />
-          </mesh>
-          <Line
-            points={previewCorners(previewCenter, previewQuaternion, previewSize)}
-            color={COLORS.accent.cyan}
-            lineWidth={1}
-            transparent opacity={0.25}
-            dashed dashSize={0.15} gapSize={0.1}
-          />
-          {/* Stage label */}
-          <Html position={previewCenter} center distanceFactor={10} style={{ pointerEvents: 'none' }}>
-            <div style={{
-              background: 'rgba(15,10,40,0.8)', border: '1px solid #22D3EE',
-              borderRadius: '10px', padding: '3px 10px', color: '#22D3EE',
-              fontSize: '10px', fontWeight: 700, fontFamily: 'monospace', whiteSpace: 'nowrap',
-              marginTop: '-52px',
-            }}>
-              CLICK TO CUT
-            </div>
-          </Html>
-        </group>
-      )}
-
       {/* ── Stage 2: Rotation preview — perspective/ISO only (ortho completes at 2 clicks) ── */}
       {!isDrawingComplete && activeTool === 'knife' && !isOrthoView && lockedCount === 2 && vectorPoints.length >= 3 && (
         <group>

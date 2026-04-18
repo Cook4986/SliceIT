@@ -51,10 +51,10 @@ export function useKeyboardShortcuts() {
         return;
       }
 
-      // Transform mode shortcuts
-      if (key === 'g') { store.setTransformMode('translate'); return; }
-      if (key === 'r') { store.setTransformMode('rotate'); return; }
-      if (key === 't') { store.setTransformMode('scale'); return; }
+      // Transform mode shortcuts (W/E/R — matches StatusBar pill labels)
+      if (key === 'w') { store.setTransformMode('translate'); return; }
+      if (key === 'e') { store.setTransformMode('rotate'); return; }
+      if (key === 'r') { store.setTransformMode('scale'); return; }
 
       // View selection (1-9)
       if (/^[1-9]$/.test(key)) {

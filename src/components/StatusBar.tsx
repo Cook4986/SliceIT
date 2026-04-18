@@ -19,7 +19,8 @@ export function StatusBar() {
   const setTransformMode = useStore(s => s.setTransformMode);
 
   const activeConfig = VIEW_CONFIGS[activeViewIndex];
-  const showModeToggle = isDrawingComplete && (activeTool === 'knife' || activeTool === 'lasso');
+  const isPrimitiveTool = activeTool === 'box' || activeTool === 'sphere' || activeTool === 'plane';
+  const showModeToggle = isPrimitiveTool || (isDrawingComplete && (activeTool === 'knife' || activeTool === 'lasso'));
 
   const pillBtn = (active: boolean, color: string) => ({
     background: active ? color : 'transparent',
@@ -53,7 +54,7 @@ export function StatusBar() {
         )}
       </div>
 
-      {/* Center: Active View label OR Move/Rotate toggle when plane deployed */}
+      {/* Center: Active View label + Move/Rotate/Scale toggle */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontWeight: 700 }}>
         <span style={{ color: 'var(--color-accent-lime)' }}>
           {activeConfig.label.toUpperCase()}
@@ -70,6 +71,12 @@ export function StatusBar() {
                 style={pillBtn(transformMode === 'rotate', '#F472B6')}
                 onClick={() => setTransformMode('rotate')}
               >↻ ROTATE [E]</button>
+              {isPrimitiveTool && (
+                <button
+                  style={pillBtn(transformMode === 'scale', '#A3E635')}
+                  onClick={() => setTransformMode('scale')}
+                >⇲ SCALE [R]</button>
+              )}
             </div>
           </>
         )}
