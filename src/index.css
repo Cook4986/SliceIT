@@ -49,6 +49,14 @@ html, body, #root {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Ensure the root app container uses dynamic viewport height (accounts for mobile browser chrome) */
+.app-root {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 /* === Viewport Grid === */
 .viewport-grid {
   display: grid;
@@ -147,6 +155,31 @@ html, body, #root {
   border: 4px solid #1E1B4B;
   border-radius: 50px;
   box-shadow: var(--shadow-retro);
+}
+
+/* === Load / Save button 90s glow colours === */
+.tool-btn.btn-load {
+  background: linear-gradient(135deg, #22D3EE, #0EA5E9);
+  border-color: #0284C7;
+  box-shadow: 0 3px 0 #0284C7, 0 0 12px rgba(34,211,238,0.5);
+  color: #0F0A28;
+}
+.tool-btn.btn-load:hover {
+  background: linear-gradient(135deg, #67E8F9, #22D3EE);
+  box-shadow: 0 5px 0 #0284C7, 0 0 20px rgba(34,211,238,0.7);
+  transform: translateY(-2px);
+}
+
+.tool-btn.btn-save {
+  background: linear-gradient(135deg, #A3E635, #84CC16);
+  border-color: #65A30D;
+  box-shadow: 0 3px 0 #65A30D, 0 0 12px rgba(163,230,53,0.5);
+  color: #0F0A28;
+}
+.tool-btn.btn-save:hover {
+  background: linear-gradient(135deg, #D9F99D, #A3E635);
+  box-shadow: 0 5px 0 #65A30D, 0 0 20px rgba(163,230,53,0.7);
+  transform: translateY(-2px);
 }
 
 .tool-btn {
@@ -322,19 +355,82 @@ html, body, #root {
     grid-template-rows: repeat(2, 1fr);
   }
   .header {
-    flex-direction: column;
-    gap: 12px;
+    /* Stay horizontal — DON'T stack, just shrink */
+    flex-direction: row;
+    padding: 6px 10px;
+    gap: 6px;
   }
-  .logo { font-size: 24px; }
+  .logo { font-size: 20px; }
+  .toolbar {
+    gap: 5px;
+    padding: 5px 10px;
+  }
+  .tool-btn {
+    width: 34px;
+    height: 34px;
+    font-size: 15px;
+    border-width: 2px;
+    box-shadow: 0 2px 0 #1E1B4B;
+  }
+  .slice-btn {
+    font-size: 14px;
+    padding: 7px 14px;
+  }
+  .drop-zone {
+    width: min(90vw, 360px);
+    height: min(50vw, 260px);
+  }
 }
 
 @media (max-width: 480px) {
   .viewport-grid {
+    /* Single viewport fills all remaining space */
     grid-template-columns: 1fr;
     grid-template-rows: 1fr;
+    gap: 0;
+    padding: 6px;
+    /* Let it flex to remaining height, not overflow */
+    flex: 1;
+    min-height: 0;
   }
+  .header {
+    flex-direction: row;
+    padding: 4px 8px;
+    gap: 4px;
+    border-bottom-width: 3px;
+  }
+  .logo { font-size: 18px; letter-spacing: 0; }
   .toolbar {
-    flex-wrap: wrap;
-    justify-content: center;
+    flex-wrap: nowrap; /* keep on one line — buttons are small enough */
+    gap: 3px;
+    padding: 4px 8px;
+    border-radius: 30px;
   }
+  .tool-btn {
+    width: 30px;
+    height: 30px;
+    font-size: 13px;
+    border-width: 2px;
+  }
+  .tool-btn.btn-load, .tool-btn.btn-save {
+    box-shadow: 0 2px 0 #0284C7, 0 0 8px rgba(34,211,238,0.4);
+  }
+  .slice-btn {
+    font-size: 11px;
+    padding: 5px 8px;
+    border-width: 2px;
+    letter-spacing: 0;
+  }
+  .status-bar {
+    /* Compress status bar on small screens */
+    padding: 4px 8px;
+    font-size: 9px;
+  }
+  .drop-zone {
+    width: min(88vw, 320px);
+    height: min(55vw, 220px);
+    border-width: 5px;
+    border-radius: 24px;
+  }
+  .drop-zone-icon { font-size: 40px; }
 }

@@ -43,14 +43,14 @@ export function Toolbar() {
         onChange={handleFileChange}
       />
       <button
-        className="tool-btn"
+        className="tool-btn btn-load"
         title="Load It!"
         onClick={() => fileInputRef.current?.click()}
       >
         <span style={{ fontSize: '20px' }}>📂</span>
       </button>
       <button
-        className="tool-btn"
+        className="tool-btn btn-save"
         title="Save It!"
         disabled={!hasModel}
         onClick={() => setUIState({ showExportModal: true })}

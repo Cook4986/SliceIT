@@ -224,5 +224,5 @@ MIT — do whatever you want with it. Just don't call it **BOP IT!** (that's tra
 ---
 
 <div align="center">
-  <strong>matt@mncook.net</strong>
+  <a href="https://mncook.net"><strong>mncook.net</strong></a>
 </div>

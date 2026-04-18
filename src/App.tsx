@@ -16,7 +16,7 @@ export default function App() {
   useKeyboardShortcuts();
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+    <div className="app-root">
       <Header />
       {hasModel ? (
         <>
