@@ -144,6 +144,95 @@ const slicingAPI = {
     return { positions: resPositions, indices: resIndices };
   },
 
+  async subtractMeshWithPrimitive(
+    modelPositions: Float32Array,
+    modelIndices: Uint32Array | null,
+    primitiveType: 'box' | 'sphere',
+    position: [number, number, number],
+    rotation: [number, number, number],
+    scale: [number, number, number]
+  ): Promise<{ positions: Float32Array; indices: Uint32Array }> {
+    let positions = modelPositions;
+    let indices = modelIndices;
+
+    if (!indices || indices.length === 0) {
+      const tempGeo = new THREE.BufferGeometry();
+      tempGeo.setAttribute('position', new THREE.BufferAttribute(modelPositions, 3));
+      const indexed = mergeVertices(tempGeo, 1e-4);
+      indexed.computeVertexNormals();
+      positions = indexed.attributes.position.array as Float32Array;
+      indices = indexed.index!.array as Uint32Array;
+    }
+
+    try {
+      const wasm = await loadManifold();
+      const { Manifold } = wasm;
+
+      const meshGL = {
+        numProp: 3,
+        vertProperties: positions instanceof Float32Array ? positions : new Float32Array(positions),
+        triVerts: indices instanceof Uint32Array ? indices : new Uint32Array(indices),
+      };
+      const modelManifold = new Manifold(meshGL);
+
+      let cutter;
+      const rotDeg: [number, number, number] = [
+        THREE.MathUtils.radToDeg(rotation[0]),
+        THREE.MathUtils.radToDeg(rotation[1]),
+        THREE.MathUtils.radToDeg(rotation[2]),
+      ];
+
+      if (primitiveType === 'box') {
+        cutter = Manifold.cube([1, 1, 1], true) // Unit cube
+          .scale(scale)
+          .rotate(rotDeg)
+          .translate(position);
+      } else {
+        cutter = Manifold.sphere(0.5, 64) // Radius 0.5 (diameter 1) to match three.js Box scale
+          .scale(scale)
+          .rotate(rotDeg)
+          .translate(position);
+      }
+
+      const result = modelManifold.subtract(cutter);
+      if (result.isEmpty()) throw new Error('Manifold returned empty mesh — falling back to CSG');
+
+      const resultMesh = result.getMesh();
+      const resPositions = resultMesh.vertProperties instanceof Float32Array
+        ? resultMesh.vertProperties : new Float32Array(resultMesh.vertProperties);
+      const resIndices = resultMesh.triVerts instanceof Uint32Array
+        ? resultMesh.triVerts : new Uint32Array(resultMesh.triVerts);
+
+      console.log(`[SlicingWorker] Manifold ${primitiveType} subtraction complete:`, resPositions.length / 3, 'verts');
+      return { positions: resPositions, indices: resIndices };
+
+    } catch (manifoldErr: any) {
+      console.warn(`[SlicingWorker] Manifold ${primitiveType} failed, falling back to three-csg-ts:`, manifoldErr.message);
+    }
+
+    // Fallback
+    const modelGeo = new THREE.BufferGeometry();
+    modelGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    if (indices && indices.length > 0) modelGeo.setIndex(new THREE.BufferAttribute(indices, 1));
+    modelGeo.computeVertexNormals();
+    const modelMesh = new THREE.Mesh(modelGeo, new THREE.MeshBasicMaterial());
+    modelMesh.updateMatrixWorld();
+
+    const cutterGeo = primitiveType === 'box' ? new THREE.BoxGeometry(1, 1, 1) : new THREE.SphereGeometry(0.5, 32, 32);
+    const cutterMesh = new THREE.Mesh(cutterGeo, new THREE.MeshBasicMaterial());
+    cutterMesh.position.set(...position);
+    cutterMesh.rotation.set(...rotation);
+    cutterMesh.scale.set(...scale);
+    cutterMesh.updateMatrixWorld();
+
+    const resultMesh = CSG.subtract(modelMesh, cutterMesh);
+    const resGeo = resultMesh.geometry as THREE.BufferGeometry;
+    const resPositions = resGeo.attributes.position.array as Float32Array;
+    const resIndices = resGeo.index ? resGeo.index.array as Uint32Array : new Uint32Array(0);
+
+    return { positions: resPositions, indices: resIndices };
+  },
+
   async filterPointCloud(
     _points: Float32Array,
     _toolType: string,

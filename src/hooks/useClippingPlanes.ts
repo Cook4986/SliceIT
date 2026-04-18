@@ -40,22 +40,20 @@ export function useClippingPlanes() {
     }
 
     if (activeTool === 'box') {
-      // 6 planes for the unit box
-      const localPlanes = [
+      // Create 6 planes for the box subtraction.
+      // We start with planes facing outward, then negate them so they face INWARD.
+      // A pixel inside the box will have distance < 0 for ALL 6 inward-facing planes.
+      // Combined with clipIntersection = true in the material, this clips exactly the box volume.
+      return [
         new THREE.Plane(new THREE.Vector3(1, 0, 0), 0.5),
         new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0.5),
         new THREE.Plane(new THREE.Vector3(0, 1, 0), 0.5),
         new THREE.Plane(new THREE.Vector3(0, -1, 0), 0.5),
         new THREE.Plane(new THREE.Vector3(0, 0, 1), 0.5),
         new THREE.Plane(new THREE.Vector3(0, 0, -1), 0.5),
-      ];
-
-      return localPlanes.map(p => {
-        const worldPlane = p.clone().applyMatrix4(matrix);
-        // Box subtraction clips everything INSIDE the box.
-        // For clipIntersection to work, we need to show the intersection of local clippings?
-        // Actually, for subtraction, we are clipping everything INSIDE the tool's volume.
-        return worldPlane;
+      ].map(p => {
+        const worldPlane = p.applyMatrix4(matrix);
+        return worldPlane.negate(); // Flip normal so inside is < 0
       });
     }
 

@@ -516,12 +516,25 @@ export const useStore = create<SliceItStore>()(
               }
           }
 
-          const result = await api.subtractMeshWithPlane(
-              model.geometry.attributes.position.array as Float32Array, 
-              model.geometry.index?.array as Uint32Array || null, 
-              origin,
-              normal
-          );
+          let result;
+
+          if (tool.activeTool === 'box' || tool.activeTool === 'sphere') {
+              result = await api.subtractMeshWithPrimitive(
+                  model.geometry.attributes.position.array as Float32Array,
+                  model.geometry.index?.array as Uint32Array || null,
+                  tool.activeTool,
+                  tool.transform.position,
+                  tool.transform.rotation,
+                  tool.transform.scale
+              );
+          } else {
+              result = await api.subtractMeshWithPlane(
+                  model.geometry.attributes.position.array as Float32Array, 
+                  model.geometry.index?.array as Uint32Array || null, 
+                  origin,
+                  normal
+              );
+          }
 
           addLog('Worker completed boolean operation successfully.');
 
