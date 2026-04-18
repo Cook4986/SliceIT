@@ -224,5 +224,5 @@ MIT — do whatever you want with it. Just don't call it **BOP IT!** (that's tra
 ---
 
 <div align="center">
-  <strong>Made with 💜, neon, and an unhealthy obsession with the 90s.</strong>
+  <strong>matt@mncook.net</strong>
 </div>
