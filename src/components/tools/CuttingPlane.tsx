@@ -115,24 +115,14 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
   // Locked-point count (everything except the live cursor follower)
   const lockedCount = isDrawingComplete ? vectorPoints.length : Math.max(0, vectorPoints.length - 1);
 
-  // Stage 1 & 2: center = midpoint(P1, last-meaningful-point)
-  //   Stage 1 (1 locked): midpoint(P1, cursor) — tracks the whole diagonal
-  //   Stage 2 (2 locked): midpoint(P1, P2)     — fixed; cursor only tilts
+  // Preview center = P1 (the anchor point). P2/P3 only affect direction/angle.
   const previewCenter = useMemo(() => {
-    if (vectorPoints.length < 2) return vectorPoints[0]?.clone() ?? new THREE.Vector3();
-    const p1 = vectorPoints[0];
-    // In stage 2 the relevant second point is P2 (locked), not the cursor
-    const p2 = vectorPoints.length >= 3 ? vectorPoints[1] : vectorPoints[vectorPoints.length - 1];
-    return new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
+    return vectorPoints[0]?.clone() ?? new THREE.Vector3();
   }, [vectorPoints]);
 
-  // Preview size = diagonal distance (P1 → last-relevant-point), min = planeSize*0.3
-  const previewSize = useMemo(() => {
-    if (vectorPoints.length < 2) return planeSize;
-    const a = vectorPoints[0];
-    const b = vectorPoints.length >= 3 ? vectorPoints[1] : vectorPoints[vectorPoints.length - 1];
-    return Math.max(a.distanceTo(b), planeSize * 0.3);
-  }, [vectorPoints, planeSize]);
+  // Preview size = always bounding-sphere based to fully frame the mesh.
+  // Knife planes extend through the entire model — no user-controlled sizing.
+  const previewSize = planeSize;
 
   // Stage 1: horizontal plane (XZ) orientation for sizing preview
   const horizontalQ = useMemo(
@@ -164,15 +154,9 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
     return new THREE.Vector3().crossVectors(v1, v2).lengthSq() < 0.01;
   }, [vectorPoints, isDrawingComplete]);
 
-  // Deployed plane size = same diagonal distance as the Stage-1/2 preview,
-  // so the transition from preview → deployed plane is seamless (no jump).
-  const deployedSize = useMemo(() => {
-    if (vectorPoints.length >= 2) {
-      const d = vectorPoints[0].distanceTo(vectorPoints[1]);
-      if (d > 0.01) return Math.max(d, planeSize * 0.3);
-    }
-    return planeSize;
-  }, [vectorPoints, planeSize]);
+  // Deployed plane size = bounding-sphere based, same as preview.
+  // Knife planes always frame the full mesh.
+  const deployedSize = planeSize;
 
   // ── Lifecycle hooks ────────────────────────────────────────────────────────
   useEffect(() => { setActiveHandleIndex(null); }, [activeTool]);
@@ -259,7 +243,7 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
               fontSize: '10px', fontWeight: 700, fontFamily: 'monospace', whiteSpace: 'nowrap',
               marginTop: '-52px',
             }}>
-              {isOrthoView ? 'CLICK TO CUT' : 'CLICK TO SET SIZE'}
+              CLICK TO CUT
             </div>
           </Html>
         </group>

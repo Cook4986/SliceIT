@@ -410,12 +410,9 @@ export const useStore = create<SliceItStore>()(
                 if (n.lengthSq() > 0.0001) derivedNormal = [n.x, n.y, n.z];
             }
 
-            // Center = midpoint(P1, P2) in both modes
-            derivedPosition = [
-              (p0.x + p1.x) / 2,
-              (p0.y + p1.y) / 2,
-              (p0.z + p1.z) / 2,
-            ];
+            // Center = P1 (the anchor). P2 defines cut direction, P3 defines angle.
+            // The plane always frames the full mesh via bounding-sphere sizing.
+            derivedPosition = [p0.x, p0.y, p0.z];
         }
 
         return {
