@@ -83,7 +83,25 @@ export const useStore = create<SliceItStore>()(
     },
 
     setActiveViewIndex: (index: number, remote = false) => {
-      set({ activeViewIndex: index });
+      set((state) => {
+        if (state.activeViewIndex === index) return {};
+
+        const isKnifeOrLasso = state.tool.activeTool === 'knife' || state.tool.activeTool === 'lasso';
+        if (isKnifeOrLasso && !state.tool.isDrawingComplete) {
+          const initialPoint: [number, number, number] = state.sharedPointer ? [...state.sharedPointer] : [0, 0, 0];
+          return {
+            activeViewIndex: index,
+            tool: {
+              ...state.tool,
+              points: [initialPoint],
+              drawingPoints: [],
+              isDrawing: true,
+              placementIndex: 0,
+            }
+          };
+        }
+        return { activeViewIndex: index };
+      });
       if (!remote) {
         syncChannel.postMessage({ type: 'ACTIVE_VIEW_SYNC', index });
       }
@@ -254,7 +272,7 @@ export const useStore = create<SliceItStore>()(
     },
 
     setActiveView: (index: number) => {
-      set({ activeViewIndex: index });
+      get().setActiveViewIndex(index);
     },
 
     resetCameras: () => {
