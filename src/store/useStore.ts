@@ -515,10 +515,18 @@ export const useStore = create<SliceItStore>()(
 
           let result;
 
+          // IMPORTANT: copy the typed arrays before sending to the worker.
+          // Comlink may transfer (detach) ArrayBuffers, which would crash the
+          // WebGL renderer by leaving the live geometry with detached buffers.
+          const posCopy = new Float32Array(model.geometry.attributes.position.array as Float32Array);
+          const idxCopy = model.geometry.index
+            ? new Uint32Array(model.geometry.index.array as Uint32Array)
+            : null;
+
           if (tool.activeTool === 'box' || tool.activeTool === 'sphere') {
               result = await api.subtractMeshWithPrimitive(
-                  model.geometry.attributes.position.array as Float32Array,
-                  model.geometry.index?.array as Uint32Array || null,
+                  posCopy,
+                  idxCopy,
                   tool.activeTool,
                   tool.transform.position,
                   tool.transform.rotation,
@@ -526,8 +534,8 @@ export const useStore = create<SliceItStore>()(
               );
           } else {
               result = await api.subtractMeshWithPlane(
-                  model.geometry.attributes.position.array as Float32Array, 
-                  model.geometry.index?.array as Uint32Array || null, 
+                  posCopy,
+                  idxCopy,
                   origin,
                   normal
               );
