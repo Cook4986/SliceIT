@@ -28,7 +28,7 @@ export function Toolbar() {
 
   const tools: { type: ToolType; icon: string; label: string; shortcut: string }[] = [
     { type: 'knife', icon: '🔪', label: 'Flick It!', shortcut: 'K' },
-    { type: 'lasso', icon: '🪢', label: 'Lasso It!', shortcut: 'L' },
+    { type: 'lasso', icon: '🤠', label: 'Lasso It!', shortcut: 'L' },
     { type: 'box', icon: '📦', label: 'Box It!', shortcut: 'B' },
     { type: 'sphere', icon: '⚽', label: 'Ball It!', shortcut: 'S' },
   ];

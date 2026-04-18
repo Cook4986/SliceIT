@@ -15,8 +15,25 @@ export function StatusBar() {
   const statusText = useStore(s => s.operation.statusText);
   const isDrawingComplete = useStore(s => s.tool.isDrawingComplete);
   const pointCount = useStore(s => s.tool.points.length);
+  const transformMode = useStore(s => s.tool.transformMode);
+  const setTransformMode = useStore(s => s.setTransformMode);
 
   const activeConfig = VIEW_CONFIGS[activeViewIndex];
+  const showModeToggle = isDrawingComplete && (activeTool === 'knife' || activeTool === 'lasso');
+
+  const pillBtn = (active: boolean, color: string) => ({
+    background: active ? color : 'transparent',
+    color: active ? '#0F0A28' : color,
+    border: `1px solid ${color}`,
+    borderRadius: '10px',
+    padding: '1px 9px',
+    cursor: 'pointer',
+    fontWeight: 700,
+    fontFamily: 'inherit',
+    fontSize: '10px',
+    letterSpacing: '0.04em',
+    lineHeight: '18px',
+  } as React.CSSProperties);
 
   return (
     <div className="status-bar">
@@ -36,9 +53,26 @@ export function StatusBar() {
         )}
       </div>
 
-      {/* Center: Active View */}
-      <div style={{ fontWeight: 700, color: 'var(--color-accent-lime)' }}>
-        {activeConfig.label.toUpperCase()}
+      {/* Center: Active View label OR Move/Rotate toggle when plane deployed */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontWeight: 700 }}>
+        <span style={{ color: 'var(--color-accent-lime)' }}>
+          {activeConfig.label.toUpperCase()}
+        </span>
+        {showModeToggle && (
+          <>
+            <span style={{ color: 'rgba(255,255,255,0.25)', fontSize: 10 }}>·</span>
+            <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+              <button
+                style={pillBtn(transformMode === 'translate', '#22D3EE')}
+                onClick={() => setTransformMode('translate')}
+              >↔ MOVE [W]</button>
+              <button
+                style={pillBtn(transformMode === 'rotate', '#F472B6')}
+                onClick={() => setTransformMode('rotate')}
+              >↻ ROTATE [E]</button>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Right: Tool / Status */}

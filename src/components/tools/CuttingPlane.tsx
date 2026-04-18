@@ -122,18 +122,31 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
   // Stage 2: live cross-product rotation (same quaternion computed above)
   const previewQuaternion = vectorPoints.length >= 3 ? quaternion : horizontalQ;
 
-  // Degenerate-anchor detection: warn when P1≈P2 or all 3 are collinear
+  // Degenerate-anchor detection: warn when P1≈P2 or all 3 are collinear.
+  // Important: skip the collinear check when P3 (cursor) is still at P2's position —
+  // this happens the frame immediately after click 2 before the cursor has moved.
   const isDegenerate = useMemo(() => {
     if (vectorPoints.length < 3 || isDrawingComplete) return false;
     const p0 = vectorPoints[0];
     const p1 = vectorPoints[1];
     const p2 = vectorPoints[2];
     if (!p0 || !p1 || !p2) return false;
-    if (p0.distanceTo(p1) < 0.05) return true; // P1 and P2 coincident
+    if (p0.distanceTo(p1) < 0.05) return true;         // P1 ≈ P2: coincident anchors
+    if (p1.distanceTo(p2) < 0.1) return false;          // cursor still at P2 — wait for movement
     const v1 = new THREE.Vector3().subVectors(p1, p0).normalize();
     const v2 = new THREE.Vector3().subVectors(p2, p0).normalize();
-    return new THREE.Vector3().crossVectors(v1, v2).lengthSq() < 0.01; // collinear
+    return new THREE.Vector3().crossVectors(v1, v2).lengthSq() < 0.01;
   }, [vectorPoints, isDrawingComplete]);
+
+  // Deployed plane size = same diagonal distance as the Stage-1/2 preview,
+  // so the transition from preview → deployed plane is seamless (no jump).
+  const deployedSize = useMemo(() => {
+    if (vectorPoints.length >= 2) {
+      const d = vectorPoints[0].distanceTo(vectorPoints[1]);
+      if (d > 0.01) return Math.max(d, planeSize * 0.3);
+    }
+    return planeSize;
+  }, [vectorPoints, planeSize]);
 
   // ── Lifecycle hooks ────────────────────────────────────────────────────────
   useEffect(() => { setActiveHandleIndex(null); }, [activeTool]);
@@ -281,14 +294,13 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
               quaternion={quaternion}
               isActive={isActive && activeHandleIndex === 'plane'}
               mode={transformMode}
-              planeSize={planeSize}
+              planeSize={deployedSize}
               onClick={() => setActiveHandleIndex('plane')}
               onTransformChange={(pos: THREE.Vector3, quat: THREE.Quaternion) => {
                 updatePlanePosition([pos.x, pos.y, pos.z]);
                 const n = new THREE.Vector3(0, 0, 1).applyQuaternion(quat).normalize();
                 updatePlaneNormal([n.x, n.y, n.z]);
               }}
-              setTransformMode={setTransformMode}
             />
           ) : (
             <LassoSurface
@@ -297,7 +309,6 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
               mode={transformMode}
               onClick={() => setActiveHandleIndex('plane')}
               onTransformChange={(pos: THREE.Vector3) => { updatePlanePosition([pos.x, pos.y, pos.z]); }}
-              setTransformMode={setTransformMode}
             />
           )}
         </group>
@@ -308,7 +319,7 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
 
 // ── PlaneSurface ──────────────────────────────────────────────────────────────
 
-function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick, onTransformChange, setTransformMode }: any) {
+function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick, onTransformChange }: any) {
   const meshRef = useRef<THREE.Mesh>(null);
   const { invalidate } = useThree();
   const size = planeSize || 3;
@@ -349,42 +360,13 @@ function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick, 
       {isActive && meshRef.current && (
         <TransformControls object={meshRef.current} mode={mode} onObjectChange={handleChange} />
       )}
-      {/* Mode-toggle pill */}
-      {isActive && meshRef.current && (
-        <Html position={center} style={{ pointerEvents: 'none' }} center distanceFactor={8}>
-          <div style={{
-            display: 'flex', gap: '6px',
-            background: 'rgba(15,10,40,0.85)', border: '1.5px solid rgba(255,255,255,0.15)',
-            borderRadius: '20px', padding: '5px 10px', marginTop: '-72px',
-            backdropFilter: 'blur(6px)', pointerEvents: 'all', userSelect: 'none',
-            fontSize: '11px', fontWeight: 700, fontFamily: 'monospace', whiteSpace: 'nowrap',
-          }}>
-            <button onClick={(e) => { e.stopPropagation(); setTransformMode('translate'); }}
-              style={{
-                background: mode === 'translate' ? '#22D3EE' : 'transparent',
-                color: mode === 'translate' ? '#0F0A28' : '#22D3EE',
-                border: '1px solid #22D3EE', borderRadius: '12px', padding: '3px 10px',
-                cursor: 'pointer', fontWeight: 700, fontFamily: 'monospace', fontSize: '11px',
-              }}
-            >↔ MOVE [W]</button>
-            <button onClick={(e) => { e.stopPropagation(); setTransformMode('rotate'); }}
-              style={{
-                background: mode === 'rotate' ? '#F472B6' : 'transparent',
-                color: mode === 'rotate' ? '#0F0A28' : '#F472B6',
-                border: '1px solid #F472B6', borderRadius: '12px', padding: '3px 10px',
-                cursor: 'pointer', fontWeight: 700, fontFamily: 'monospace', fontSize: '11px',
-              }}
-            >↻ ROTATE [E]</button>
-          </div>
-        </Html>
-      )}
     </group>
   );
 }
 
 // ── LassoSurface ──────────────────────────────────────────────────────────────
 
-function LassoSurface({ points, isActive, mode, onClick, onTransformChange, setTransformMode }: any) {
+function LassoSurface({ points, isActive, mode, onClick, onTransformChange }: any) {
   const meshRef = useRef<THREE.Mesh>(null);
   const { invalidate } = useThree();
 
@@ -434,24 +416,6 @@ function LassoSurface({ points, isActive, mode, onClick, onTransformChange, setT
       </mesh>
       {isActive && meshRef.current && (
         <TransformControls object={meshRef.current} mode={mode} onObjectChange={handleChange} />
-      )}
-      {isActive && meshRef.current && (
-        <Html position={center} center distanceFactor={8} style={{ pointerEvents: 'none' }}>
-          <div style={{
-            display: 'flex', gap: '6px',
-            background: 'rgba(15,10,40,0.85)', border: '1.5px solid rgba(255,255,255,0.15)',
-            borderRadius: '20px', padding: '5px 10px', marginTop: '-72px',
-            backdropFilter: 'blur(6px)', pointerEvents: 'all', userSelect: 'none',
-            fontSize: '11px', fontWeight: 700, fontFamily: 'monospace', whiteSpace: 'nowrap',
-          }}>
-            <button onClick={(e) => { e.stopPropagation(); setTransformMode('translate'); }}
-              style={{ background: mode === 'translate' ? '#22D3EE' : 'transparent', color: mode === 'translate' ? '#0F0A28' : '#22D3EE', border: '1px solid #22D3EE', borderRadius: '12px', padding: '3px 10px', cursor: 'pointer', fontWeight: 700, fontFamily: 'monospace', fontSize: '11px' }}
-            >↔ MOVE [W]</button>
-            <button onClick={(e) => { e.stopPropagation(); setTransformMode('rotate'); }}
-              style={{ background: mode === 'rotate' ? '#F472B6' : 'transparent', color: mode === 'rotate' ? '#0F0A28' : '#F472B6', border: '1px solid #F472B6', borderRadius: '12px', padding: '3px 10px', cursor: 'pointer', fontWeight: 700, fontFamily: 'monospace', fontSize: '11px' }}
-            >↻ ROTATE [E]</button>
-          </div>
-        </Html>
       )}
     </group>
   );
