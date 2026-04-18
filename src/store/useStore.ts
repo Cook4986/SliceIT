@@ -348,12 +348,20 @@ export const useStore = create<SliceItStore>()(
         // Count locked points (the current one we just locked + all before it)
         const lockedCount = placementIndex + 1;
         
+        // Determine if the active viewport is orthographic (TOP/FRONT/RIGHT/etc.)
+        // Ortho views complete after 2 locked points; perspective (ISO) needs 3.
+        const isOrthoView = VIEW_CONFIGS[s.activeViewIndex]?.cameraType === 'orthographic';
+
         // Check if drawing should complete
         let isDrawingComplete = false;
         let newPlacementIndex = placementIndex + 1;
 
-        if (activeTool === 'knife' && lockedCount >= 3) {
-            // Knife needs exactly 3 points to define a plane
+        if (activeTool === 'knife' && isOrthoView && lockedCount >= 2) {
+            // Ortho 2-click: the line P1→P2 defines the cut direction
+            isDrawingComplete = true;
+            newPlacementIndex = -1;
+        } else if (activeTool === 'knife' && !isOrthoView && lockedCount >= 3) {
+            // Perspective 3-click: cross product of two edge vectors defines the normal
             isDrawingComplete = true;
             newPlacementIndex = -1;
         } else if (activeTool === 'lasso' && lockedCount > 8) {
@@ -364,25 +372,27 @@ export const useStore = create<SliceItStore>()(
             newPoints.push([...pos] as [number, number, number]);
         }
 
-        // Compute initial plane normal and set position to the model's geometric center
-        // whenever drawing completes (knife: 3 pts locked; lasso: polygon closed).
-        // The 3 clicks define orientation only; the plane spawns centered on the model
-        // so the model always straddles the plane at deployment. The user can then
-        // translate/rotate freely from there.
         let derivedNormal: [number, number, number] = s.tool.planeNormal;
         let derivedPosition: [number, number, number] = s.tool.planePosition;
-        if (isDrawingComplete && activeTool === 'knife' && newPoints.length >= 3) {
+
+        if (isDrawingComplete && activeTool === 'knife') {
             const p0 = new THREE.Vector3(...newPoints[0]);
             const p1 = new THREE.Vector3(...newPoints[1]);
-            const p2 = new THREE.Vector3(...newPoints[2]);
-            const v1 = new THREE.Vector3().subVectors(p1, p0).normalize();
-            const v2 = new THREE.Vector3().subVectors(p2, p0).normalize();
-            const n = new THREE.Vector3().crossVectors(v1, v2).normalize();
-            if (n.lengthSq() > 0.0001) {
-                derivedNormal = [n.x, n.y, n.z];
+
+            if (isOrthoView) {
+                // Ortho 2-click: normal = direction of the drawn line (P1 → P2)
+                const dir = new THREE.Vector3().subVectors(p1, p0).normalize();
+                if (dir.lengthSq() > 0.0001) derivedNormal = [dir.x, dir.y, dir.z];
+            } else {
+                // Perspective 3-click: normal = cross product of two edge vectors
+                const p2 = new THREE.Vector3(...newPoints[2]);
+                const v1 = new THREE.Vector3().subVectors(p1, p0).normalize();
+                const v2 = new THREE.Vector3().subVectors(p2, p0).normalize();
+                const n = new THREE.Vector3().crossVectors(v1, v2).normalize();
+                if (n.lengthSq() > 0.0001) derivedNormal = [n.x, n.y, n.z];
             }
-            // Center = midpoint(P1, P2) — matches the Stage 1 sizing preview where P1
-            // and P2 are the diagonal corners. P3 only determines orientation.
+
+            // Center = midpoint(P1, P2) in both modes
             derivedPosition = [
               (p0.x + p1.x) / 2,
               (p0.y + p1.y) / 2,

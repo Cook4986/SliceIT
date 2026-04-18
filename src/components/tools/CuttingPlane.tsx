@@ -4,6 +4,7 @@ import { TransformControls, Sphere, Line, Html } from '@react-three/drei';
 import { useStore } from '../../store/useStore';
 import { MATERIALS, COLORS } from '../../config/theme';
 import { useThree } from '@react-three/fiber';
+import { VIEW_CONFIGS } from '../../config/viewConfigs';
 
 /**
  * CuttingPlane — Knife & Lasso tool visuals with a 3-stage interactive preview.
@@ -38,6 +39,10 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
 
   const isKnifeOrLasso = activeTool === 'knife' || activeTool === 'lasso';
 
+  // Detect if the active viewport is orthographic — ortho uses 2-click mode
+  const activeViewIndex = useStore(s => s.activeViewIndex);
+  const isOrthoView = VIEW_CONFIGS[activeViewIndex]?.cameraType === 'orthographic';
+
   // Plane display size — proportional to the model bounding sphere
   const planeSize = useMemo(() => {
     if (boundingSphere) return boundingSphere.radius * 3;
@@ -70,7 +75,23 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
   }, [points, isKnifeOrLasso]);
 
   // ── Final-plane quaternion (cross product of P1→P2 and P1→P3) ─────────────
+  // ── Plane quaternion ────────────────────────────────────────────────────────
+  // Ortho 2-point mode: normal = normalize(P2 − P1) — perpendicular to the drawn line
+  // Perspective 3-point mode: normal = cross product of (P1→P2) × (P1→P3)
   const quaternion = useMemo(() => {
+    const zAxis = new THREE.Vector3(0, 0, 1);
+
+    if (isOrthoView && vectorPoints.length >= 2) {
+      // Direction from P1 to P2 (or cursor in preview) IS the plane normal
+      const dir = new THREE.Vector3()
+        .subVectors(vectorPoints[vectorPoints.length - 1], vectorPoints[0])
+        .normalize();
+      if (dir.lengthSq() > 0.0001) {
+        return new THREE.Quaternion().setFromUnitVectors(zAxis, dir);
+      }
+      return new THREE.Quaternion();
+    }
+
     if (vectorPoints.length < 3) return new THREE.Quaternion();
     const p0 = vectorPoints[0];
     const p1 = vectorPoints[1];
@@ -87,7 +108,7 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
     if (Math.abs(normal.dot(up)) > 0.99) up.set(0, 0, 1);
     const m = new THREE.Matrix4().lookAt(new THREE.Vector3(0, 0, 0), normal, up);
     return new THREE.Quaternion().setFromRotationMatrix(m);
-  }, [vectorPoints]);
+  }, [vectorPoints, isOrthoView]);
 
   // ── Preview computations ───────────────────────────────────────────────────
 
@@ -119,8 +140,13 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
     []
   );
 
-  // Stage 2: live cross-product rotation (same quaternion computed above)
-  const previewQuaternion = vectorPoints.length >= 3 ? quaternion : horizontalQ;
+  // Stage 1 & 2: previewQuaternion
+  // Since the quaternion memo now handles both ortho (2-pt) and perspective (3-pt),
+  // we can use it directly. Fall back to the horizontal default only in perspective
+  // mode before P3 is placed.
+  const previewQuaternion = (isOrthoView && vectorPoints.length >= 2) || vectorPoints.length >= 3
+    ? quaternion
+    : horizontalQ;
 
   // Degenerate-anchor detection: warn when P1≈P2 or all 3 are collinear.
   // Important: skip the collinear check when P3 (cursor) is still at P2's position —
@@ -233,14 +259,14 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
               fontSize: '10px', fontWeight: 700, fontFamily: 'monospace', whiteSpace: 'nowrap',
               marginTop: '-52px',
             }}>
-              CLICK TO SET SIZE
+              {isOrthoView ? 'CLICK TO CUT' : 'CLICK TO SET SIZE'}
             </div>
           </Html>
         </group>
       )}
 
-      {/* ── Stage 2: Rotation preview (P1+P2 locked, cursor tilts plane) ── */}
-      {!isDrawingComplete && activeTool === 'knife' && lockedCount === 2 && vectorPoints.length >= 3 && (
+      {/* ── Stage 2: Rotation preview — perspective/ISO only (ortho completes at 2 clicks) ── */}
+      {!isDrawingComplete && activeTool === 'knife' && !isOrthoView && lockedCount === 2 && vectorPoints.length >= 3 && (
         <group>
           <mesh position={previewCenter} quaternion={previewQuaternion}>
             <planeGeometry args={[previewSize, previewSize]} />
