@@ -381,10 +381,13 @@ export const useStore = create<SliceItStore>()(
             if (n.lengthSq() > 0.0001) {
                 derivedNormal = [n.x, n.y, n.z];
             }
-            // P1 (p0) is the plane's position anchor — the plane spawns exactly at the
-            // first click. P2 and P3 define the tilt via their vectors from P1.
-            // Off-center clicks → off-center plane; P2/P3 only spin the orientation.
-            derivedPosition = [p0.x, p0.y, p0.z];
+            // Center = midpoint(P1, P2) — matches the Stage 1 sizing preview where P1
+            // and P2 are the diagonal corners. P3 only determines orientation.
+            derivedPosition = [
+              (p0.x + p1.x) / 2,
+              (p0.y + p1.y) / 2,
+              (p0.z + p1.z) / 2,
+            ];
         }
 
         return {

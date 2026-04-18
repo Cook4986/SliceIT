@@ -6,8 +6,18 @@ import { MATERIALS, COLORS } from '../../config/theme';
 import { useThree } from '@react-three/fiber';
 
 /**
- * CuttingPlane — Supports both Knife and Lasso tool visuals.
- * All hooks are called unconditionally to satisfy React's Rules of Hooks.
+ * CuttingPlane — Knife & Lasso tool visuals with a 3-stage interactive preview.
+ *
+ * Knife tool stages (all driven by the live vectorPoints array):
+ *   Stage 1 — 1 locked pt  : horizontal preview plane sizes in real-time
+ *                             as cursor moves (P1 + cursor = diagonal corners).
+ *   Stage 2 — 2 locked pts : plane center is fixed at midpoint(P1,P2).
+ *                             Cursor movement rotates the preview in real-time.
+ *   Stage 3 — isDrawingComplete : preview replaced by deployed plane +
+ *                             TransformControls + MOVE/ROTATE pill.
+ *
+ * Degenerate-anchor warning fires when P1 and P2 are too close, or all 3 points
+ * are collinear (cross product ≈ 0), before the user makes the final click.
  */
 export function CuttingPlane({ isActive }: { isActive: boolean }) {
   const points = useStore(s => s.tool.points);
@@ -17,371 +27,432 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
   const sharedPointer = useStore(s => s.sharedPointer);
   const transformMode = useStore(s => s.tool.transformMode);
   const boundingSphere = useStore(s => s.model.boundingSphere);
-  
+  const planePosition = useStore(s => s.tool.planePosition);
+
   const updatePoint = useStore(s => s.updatePoint);
   const setTransformMode = useStore(s => s.setTransformMode);
   const updatePlaneNormal = useStore(s => s.updatePlaneNormal);
   const updatePlanePosition = useStore(s => s.updatePlanePosition);
-  const planePosition = useStore(s => s.tool.planePosition);
-  
+
   const [activeHandleIndex, setActiveHandleIndex] = useState<number | 'plane' | null>(null);
 
   const isKnifeOrLasso = activeTool === 'knife' || activeTool === 'lasso';
 
-  // Compute plane size from model bounding sphere (default ~3 units for a normalized 2-unit model)
+  // Plane display size — proportional to the model bounding sphere
   const planeSize = useMemo(() => {
     if (boundingSphere) return boundingSphere.radius * 3;
     return 3;
   }, [boundingSphere]);
 
-  // Track mouse position for active placement — only in active viewport
+  // Track cursor in active viewport
   useEffect(() => {
     if (isKnifeOrLasso && isActive && placementIndex !== -1 && sharedPointer) {
-        updatePoint(placementIndex, sharedPointer);
+      updatePoint(placementIndex, sharedPointer);
     }
   }, [isKnifeOrLasso, isActive, sharedPointer, placementIndex, updatePoint]);
 
-  // Global mode switching (W/E keys)
+  // W/E keys switch transform mode
   useEffect(() => {
     if (!isKnifeOrLasso) return;
     const handleKey = (e: KeyboardEvent) => {
-        const key = e.key.toLowerCase();
-        if (key === 'w') setTransformMode('translate');
-        if (key === 'e') setTransformMode('rotate');
+      const key = e.key.toLowerCase();
+      if (key === 'w') setTransformMode('translate');
+      if (key === 'e') setTransformMode('rotate');
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
   }, [setTransformMode, isKnifeOrLasso]);
 
+  // All current world-space points (locked + live cursor)
   const vectorPoints = useMemo(() => {
     if (!isKnifeOrLasso) return [];
     return points.filter(p => p && p.length === 3).map(p => new THREE.Vector3(...p));
   }, [points, isKnifeOrLasso]);
-  
 
+  // ── Final-plane quaternion (cross product of P1→P2 and P1→P3) ─────────────
   const quaternion = useMemo(() => {
     if (vectorPoints.length < 3) return new THREE.Quaternion();
     const p0 = vectorPoints[0];
     const p1 = vectorPoints[1];
     const p2 = vectorPoints[2];
-    
     if (!p0 || !p1 || !p2) return new THREE.Quaternion();
-
     const v1 = new THREE.Vector3().subVectors(p1, p0);
     const v2 = new THREE.Vector3().subVectors(p2, p0);
-    
-    // Guard against degenerate (collinear) points
     if (v1.lengthSq() < 1e-8 || v2.lengthSq() < 1e-8) return new THREE.Quaternion();
     v1.normalize();
     v2.normalize();
-    
     const normal = new THREE.Vector3().crossVectors(v1, v2).normalize();
     if (normal.lengthSq() < 0.0001) return new THREE.Quaternion();
-    
     let up = new THREE.Vector3(0, 1, 0);
     if (Math.abs(normal.dot(up)) > 0.99) up.set(0, 0, 1);
-    
     const m = new THREE.Matrix4().lookAt(new THREE.Vector3(0, 0, 0), normal, up);
     return new THREE.Quaternion().setFromRotationMatrix(m);
   }, [vectorPoints]);
 
-  // Reset handle selection when tool changes
-  useEffect(() => {
-    setActiveHandleIndex(null);
-  }, [activeTool]);
+  // ── Preview computations ───────────────────────────────────────────────────
 
-  // Feature 1: once all 3 knife points are placed, hide the path and auto-activate
-  // the translate widget so the user gets direct plane manipulation immediately.
+  // Locked-point count (everything except the live cursor follower)
+  const lockedCount = isDrawingComplete ? vectorPoints.length : Math.max(0, vectorPoints.length - 1);
+
+  // Stage 1 & 2: center = midpoint(P1, last-meaningful-point)
+  //   Stage 1 (1 locked): midpoint(P1, cursor) — tracks the whole diagonal
+  //   Stage 2 (2 locked): midpoint(P1, P2)     — fixed; cursor only tilts
+  const previewCenter = useMemo(() => {
+    if (vectorPoints.length < 2) return vectorPoints[0]?.clone() ?? new THREE.Vector3();
+    const p1 = vectorPoints[0];
+    // In stage 2 the relevant second point is P2 (locked), not the cursor
+    const p2 = vectorPoints.length >= 3 ? vectorPoints[1] : vectorPoints[vectorPoints.length - 1];
+    return new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
+  }, [vectorPoints]);
+
+  // Preview size = diagonal distance (P1 → last-relevant-point), min = planeSize*0.3
+  const previewSize = useMemo(() => {
+    if (vectorPoints.length < 2) return planeSize;
+    const a = vectorPoints[0];
+    const b = vectorPoints.length >= 3 ? vectorPoints[1] : vectorPoints[vectorPoints.length - 1];
+    return Math.max(a.distanceTo(b), planeSize * 0.3);
+  }, [vectorPoints, planeSize]);
+
+  // Stage 1: horizontal plane (XZ) orientation for sizing preview
+  const horizontalQ = useMemo(
+    () => new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2),
+    []
+  );
+
+  // Stage 2: live cross-product rotation (same quaternion computed above)
+  const previewQuaternion = vectorPoints.length >= 3 ? quaternion : horizontalQ;
+
+  // Degenerate-anchor detection: warn when P1≈P2 or all 3 are collinear
+  const isDegenerate = useMemo(() => {
+    if (vectorPoints.length < 3 || isDrawingComplete) return false;
+    const p0 = vectorPoints[0];
+    const p1 = vectorPoints[1];
+    const p2 = vectorPoints[2];
+    if (!p0 || !p1 || !p2) return false;
+    if (p0.distanceTo(p1) < 0.05) return true; // P1 and P2 coincident
+    const v1 = new THREE.Vector3().subVectors(p1, p0).normalize();
+    const v2 = new THREE.Vector3().subVectors(p2, p0).normalize();
+    return new THREE.Vector3().crossVectors(v1, v2).lengthSq() < 0.01; // collinear
+  }, [vectorPoints, isDrawingComplete]);
+
+  // ── Lifecycle hooks ────────────────────────────────────────────────────────
+  useEffect(() => { setActiveHandleIndex(null); }, [activeTool]);
+
   useEffect(() => {
-    if (isDrawingComplete) {
-      setActiveHandleIndex('plane');
-    }
+    if (isDrawingComplete) setActiveHandleIndex('plane');
   }, [isDrawingComplete]);
 
   // Early return AFTER all hooks
   if (!isKnifeOrLasso) return null;
   if (vectorPoints.length === 0) return null;
 
+  // ── Preview edge corners helper ────────────────────────────────────────────
+  const previewCorners = (center: THREE.Vector3, quat: THREE.Quaternion, size: number) => {
+    const h = size / 2;
+    return [
+      new THREE.Vector3(-h, -h, 0).applyQuaternion(quat).add(center),
+      new THREE.Vector3( h, -h, 0).applyQuaternion(quat).add(center),
+      new THREE.Vector3( h,  h, 0).applyQuaternion(quat).add(center),
+      new THREE.Vector3(-h,  h, 0).applyQuaternion(quat).add(center),
+      new THREE.Vector3(-h, -h, 0).applyQuaternion(quat).add(center),
+    ];
+  };
+
   return (
     <group>
-      {/* Path and anchor markers — visible ONLY while placing points.
-          Once drawing is complete they are hidden to declutter the viewports,
-          leaving only the cutting plane + TransformControls widget. */}
+
+      {/* ── Anchor dots + connector line (shown while placing) ──────────── */}
       {!isDrawingComplete && (
         <>
-          {/* Path Wireframe */}
           {vectorPoints.length > 1 && (
             <Line
-              points={[
-                ...vectorPoints, 
+              points={[...vectorPoints,
                 placementIndex === -1 ? vectorPoints[0] : vectorPoints[vectorPoints.length - 1]
               ]}
-              color={COLORS.accent.cyan}
+              color={isDegenerate ? '#ff4444' : COLORS.accent.cyan}
               lineWidth={2.5}
               transparent
               opacity={0.8}
             />
           )}
-
-          {/* Anchor Spheres */}
-          {vectorPoints.map((p, i) => (
-            <group key={`h-${i}`}>
-                <Sphere 
-                    args={[0.05, 12, 12]} 
-                    position={p}
-                    onPointerDown={(e) => {
-                        e.stopPropagation();
-                        if (isDrawingComplete && isActive) {
-                            setActiveHandleIndex(i);
-                        }
-                    }}
+          {vectorPoints.map((p, i) => {
+            const isLocked = i < lockedCount;
+            return (
+              <group key={`h-${i}`}>
+                <Sphere args={[0.05, 12, 12]} position={p}
+                  onPointerDown={(e) => { e.stopPropagation(); }}
                 >
-                    <meshStandardMaterial 
-                        color={activeHandleIndex === i ? COLORS.accent.yellow : COLORS.accent.cyan} 
-                        emissive={activeHandleIndex === i ? '#FACC15' : '#22D3EE'}
-                        emissiveIntensity={activeHandleIndex === i ? 0.8 : 0.3}
-                    />
+                  <meshStandardMaterial
+                    color={isDegenerate ? '#ff4444' : (isLocked ? COLORS.accent.yellow : COLORS.accent.cyan)}
+                    emissive={isDegenerate ? '#ff2222' : (isLocked ? '#FACC15' : '#22D3EE')}
+                    emissiveIntensity={isLocked ? 0.9 : 0.3}
+                  />
                 </Sphere>
-            </group>
-          ))}
+              </group>
+            );
+          })}
         </>
       )}
 
-      {/* Cutting Surface — only show when drawing is complete (all points placed) */}
+      {/* ── Stage 1: Sizing preview (P1 locked, cursor = diagonal corner) ── */}
+      {!isDrawingComplete && activeTool === 'knife' && lockedCount === 1 && vectorPoints.length >= 2 && (
+        <group>
+          <mesh position={previewCenter} quaternion={previewQuaternion}>
+            <planeGeometry args={[previewSize, previewSize]} />
+            <meshStandardMaterial
+              color={COLORS.accent.cyan}
+              transparent opacity={0.06}
+              side={THREE.DoubleSide} depthWrite={false}
+            />
+          </mesh>
+          <Line
+            points={previewCorners(previewCenter, previewQuaternion, previewSize)}
+            color={COLORS.accent.cyan}
+            lineWidth={1}
+            transparent opacity={0.25}
+            dashed dashSize={0.15} gapSize={0.1}
+          />
+          {/* Stage label */}
+          <Html position={previewCenter} center distanceFactor={10} style={{ pointerEvents: 'none' }}>
+            <div style={{
+              background: 'rgba(15,10,40,0.8)', border: '1px solid #22D3EE',
+              borderRadius: '10px', padding: '3px 10px', color: '#22D3EE',
+              fontSize: '10px', fontWeight: 700, fontFamily: 'monospace', whiteSpace: 'nowrap',
+              marginTop: '-52px',
+            }}>
+              CLICK TO SET SIZE
+            </div>
+          </Html>
+        </group>
+      )}
+
+      {/* ── Stage 2: Rotation preview (P1+P2 locked, cursor tilts plane) ── */}
+      {!isDrawingComplete && activeTool === 'knife' && lockedCount === 2 && vectorPoints.length >= 3 && (
+        <group>
+          <mesh position={previewCenter} quaternion={previewQuaternion}>
+            <planeGeometry args={[previewSize, previewSize]} />
+            <meshStandardMaterial
+              color={isDegenerate ? '#ff4444' : COLORS.accent.pink}
+              transparent opacity={isDegenerate ? 0.12 : 0.09}
+              side={THREE.DoubleSide} depthWrite={false}
+            />
+          </mesh>
+          <Line
+            points={previewCorners(previewCenter, previewQuaternion, previewSize)}
+            color={isDegenerate ? '#ff4444' : COLORS.accent.pink}
+            lineWidth={1.5}
+            transparent opacity={isDegenerate ? 0.8 : 0.35}
+            dashed dashSize={0.12} gapSize={0.08}
+          />
+          {/* Degenerate warning */}
+          {isDegenerate && (
+            <Html position={previewCenter} center distanceFactor={10} style={{ pointerEvents: 'none' }}>
+              <div style={{
+                background: 'rgba(80,10,10,0.9)', border: '1.5px solid #ff4444',
+                borderRadius: '10px', padding: '4px 12px', color: '#ff8888',
+                fontSize: '10px', fontWeight: 700, fontFamily: 'monospace', whiteSpace: 'nowrap',
+                marginTop: '-52px',
+              }}>
+                ⚠ POINTS TOO CLOSE — SPREAD ANCHORS
+              </div>
+            </Html>
+          )}
+          {!isDegenerate && (
+            <Html position={previewCenter} center distanceFactor={10} style={{ pointerEvents: 'none' }}>
+              <div style={{
+                background: 'rgba(15,10,40,0.8)', border: '1px solid #F472B6',
+                borderRadius: '10px', padding: '3px 10px', color: '#F472B6',
+                fontSize: '10px', fontWeight: 700, fontFamily: 'monospace', whiteSpace: 'nowrap',
+                marginTop: '-52px',
+              }}>
+                CLICK TO SET ANGLE
+              </div>
+            </Html>
+          )}
+        </group>
+      )}
+
+      {/* ── Stage 3: Deployed plane + TransformControls ─────────────────── */}
       {isDrawingComplete && vectorPoints.length >= 3 && (
         <group>
-            {activeTool === 'knife' ? (
-                <PlaneSurface 
-                    // center = P1 from the store (first click = plane anchor).
-                    // Updated live by TransformControls write-back while user drags.
-                    center={new THREE.Vector3(...planePosition)}
-                    quaternion={quaternion} 
-                    isActive={isActive && activeHandleIndex === 'plane'}
-                    mode={transformMode}
-                    planeSize={planeSize}
-                    onClick={() => setActiveHandleIndex('plane')}
-                    onTransformChange={(pos: THREE.Vector3, quat: THREE.Quaternion) => {
-                        updatePlanePosition([pos.x, pos.y, pos.z]);
-                        const n = new THREE.Vector3(0, 0, 1).applyQuaternion(quat).normalize();
-                        updatePlaneNormal([n.x, n.y, n.z]);
-                    }}
-                    setTransformMode={setTransformMode}
-                />
-            ) : (
-                <LassoSurface 
-                    points={vectorPoints} 
-                    isActive={isActive && activeHandleIndex === 'plane'}
-                    mode={transformMode}
-                    onClick={() => setActiveHandleIndex('plane')}
-                    onTransformChange={(pos: THREE.Vector3) => {
-                        updatePlanePosition([pos.x, pos.y, pos.z]);
-                    }}
-                    setTransformMode={setTransformMode}
-                />
-            )}
+          {activeTool === 'knife' ? (
+            <PlaneSurface
+              center={new THREE.Vector3(...planePosition)}
+              quaternion={quaternion}
+              isActive={isActive && activeHandleIndex === 'plane'}
+              mode={transformMode}
+              planeSize={planeSize}
+              onClick={() => setActiveHandleIndex('plane')}
+              onTransformChange={(pos: THREE.Vector3, quat: THREE.Quaternion) => {
+                updatePlanePosition([pos.x, pos.y, pos.z]);
+                const n = new THREE.Vector3(0, 0, 1).applyQuaternion(quat).normalize();
+                updatePlaneNormal([n.x, n.y, n.z]);
+              }}
+              setTransformMode={setTransformMode}
+            />
+          ) : (
+            <LassoSurface
+              points={vectorPoints}
+              isActive={isActive && activeHandleIndex === 'plane'}
+              mode={transformMode}
+              onClick={() => setActiveHandleIndex('plane')}
+              onTransformChange={(pos: THREE.Vector3) => { updatePlanePosition([pos.x, pos.y, pos.z]); }}
+              setTransformMode={setTransformMode}
+            />
+          )}
         </group>
       )}
     </group>
   );
 }
 
+// ── PlaneSurface ──────────────────────────────────────────────────────────────
+
 function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick, onTransformChange, setTransformMode }: any) {
-    const meshRef = useRef<THREE.Mesh>(null);
-    const { invalidate } = useThree();
-    const size = planeSize || 3;
+  const meshRef = useRef<THREE.Mesh>(null);
+  const { invalidate } = useThree();
+  const size = planeSize || 3;
 
-    const handleChange = () => {
-        if (meshRef.current && onTransformChange) {
-            const worldPos = new THREE.Vector3();
-            const worldQuat = new THREE.Quaternion();
-            meshRef.current.getWorldPosition(worldPos);
-            meshRef.current.getWorldQuaternion(worldQuat);
-            onTransformChange(worldPos, worldQuat);
-        }
-        invalidate();
-    };
+  const handleChange = () => {
+    if (meshRef.current && onTransformChange) {
+      const worldPos = new THREE.Vector3();
+      const worldQuat = new THREE.Quaternion();
+      meshRef.current.getWorldPosition(worldPos);
+      meshRef.current.getWorldQuaternion(worldQuat);
+      onTransformChange(worldPos, worldQuat);
+    }
+    invalidate();
+  };
 
-    return (
-        <group>
-            <mesh
-                ref={meshRef}
-                position={center}
-                quaternion={quaternion}
-                onPointerDown={(e) => { e.stopPropagation(); onClick(); }}
-            >
-                <planeGeometry args={[size, size]} />
-                <meshStandardMaterial
-                    color={MATERIALS.cutter.color}
-                    transparent
-                    opacity={0.18}
-                    side={THREE.DoubleSide}
-                    depthWrite={false}
-                />
-            </mesh>
-            {/* Edge highlight ring */}
-            <Line
-                points={[
-                    new THREE.Vector3(-size/2, -size/2, 0).applyQuaternion(quaternion).add(center),
-                    new THREE.Vector3( size/2, -size/2, 0).applyQuaternion(quaternion).add(center),
-                    new THREE.Vector3( size/2,  size/2, 0).applyQuaternion(quaternion).add(center),
-                    new THREE.Vector3(-size/2,  size/2, 0).applyQuaternion(quaternion).add(center),
-                    new THREE.Vector3(-size/2, -size/2, 0).applyQuaternion(quaternion).add(center),
-                ]}
-                color={COLORS.accent.pink}
-                lineWidth={1.5}
-                transparent
-                opacity={0.4}
-            />
-            {isActive && meshRef.current && (
-                <TransformControls
-                    object={meshRef.current}
-                    mode={mode}
-                    onObjectChange={handleChange}
-                />
-            )}
-            {/* Mode-toggle pill — visible whenever the plane is active */}
-            {isActive && meshRef.current && (
-                <Html
-                    position={center}
-                    style={{ pointerEvents: 'none' }}
-                    center
-                    distanceFactor={8}
-                >
-                    <div style={{
-                        display: 'flex',
-                        gap: '6px',
-                        background: 'rgba(15,10,40,0.85)',
-                        border: '1.5px solid rgba(255,255,255,0.15)',
-                        borderRadius: '20px',
-                        padding: '5px 10px',
-                        marginTop: '-72px',
-                        backdropFilter: 'blur(6px)',
-                        pointerEvents: 'all',
-                        userSelect: 'none',
-                        fontSize: '11px',
-                        fontWeight: 700,
-                        fontFamily: 'monospace',
-                        whiteSpace: 'nowrap',
-                    }}>
-                        <button
-                            onClick={(e) => { e.stopPropagation(); setTransformMode('translate'); }}
-                            style={{
-                                background: mode === 'translate' ? '#22D3EE' : 'transparent',
-                                color: mode === 'translate' ? '#0F0A28' : '#22D3EE',
-                                border: '1px solid #22D3EE',
-                                borderRadius: '12px',
-                                padding: '3px 10px',
-                                cursor: 'pointer',
-                                fontWeight: 700,
-                                fontFamily: 'monospace',
-                                fontSize: '11px',
-                            }}
-                        >↔ MOVE [W]</button>
-                        <button
-                            onClick={(e) => { e.stopPropagation(); setTransformMode('rotate'); }}
-                            style={{
-                                background: mode === 'rotate' ? '#F472B6' : 'transparent',
-                                color: mode === 'rotate' ? '#0F0A28' : '#F472B6',
-                                border: '1px solid #F472B6',
-                                borderRadius: '12px',
-                                padding: '3px 10px',
-                                cursor: 'pointer',
-                                fontWeight: 700,
-                                fontFamily: 'monospace',
-                                fontSize: '11px',
-                            }}
-                        >↻ ROTATE [E]</button>
-                    </div>
-                </Html>
-            )}
-        </group>
-    );
+  return (
+    <group>
+      <mesh ref={meshRef} position={center} quaternion={quaternion}
+        onPointerDown={(e) => { e.stopPropagation(); onClick(); }}
+      >
+        <planeGeometry args={[size, size]} />
+        <meshStandardMaterial
+          color={MATERIALS.cutter.color} transparent opacity={0.18}
+          side={THREE.DoubleSide} depthWrite={false}
+        />
+      </mesh>
+      {/* Edge highlight */}
+      <Line
+        points={[
+          new THREE.Vector3(-size/2, -size/2, 0).applyQuaternion(quaternion).add(center),
+          new THREE.Vector3( size/2, -size/2, 0).applyQuaternion(quaternion).add(center),
+          new THREE.Vector3( size/2,  size/2, 0).applyQuaternion(quaternion).add(center),
+          new THREE.Vector3(-size/2,  size/2, 0).applyQuaternion(quaternion).add(center),
+          new THREE.Vector3(-size/2, -size/2, 0).applyQuaternion(quaternion).add(center),
+        ]}
+        color={COLORS.accent.pink} lineWidth={1.5} transparent opacity={0.4}
+      />
+      {isActive && meshRef.current && (
+        <TransformControls object={meshRef.current} mode={mode} onObjectChange={handleChange} />
+      )}
+      {/* Mode-toggle pill */}
+      {isActive && meshRef.current && (
+        <Html position={center} style={{ pointerEvents: 'none' }} center distanceFactor={8}>
+          <div style={{
+            display: 'flex', gap: '6px',
+            background: 'rgba(15,10,40,0.85)', border: '1.5px solid rgba(255,255,255,0.15)',
+            borderRadius: '20px', padding: '5px 10px', marginTop: '-72px',
+            backdropFilter: 'blur(6px)', pointerEvents: 'all', userSelect: 'none',
+            fontSize: '11px', fontWeight: 700, fontFamily: 'monospace', whiteSpace: 'nowrap',
+          }}>
+            <button onClick={(e) => { e.stopPropagation(); setTransformMode('translate'); }}
+              style={{
+                background: mode === 'translate' ? '#22D3EE' : 'transparent',
+                color: mode === 'translate' ? '#0F0A28' : '#22D3EE',
+                border: '1px solid #22D3EE', borderRadius: '12px', padding: '3px 10px',
+                cursor: 'pointer', fontWeight: 700, fontFamily: 'monospace', fontSize: '11px',
+              }}
+            >↔ MOVE [W]</button>
+            <button onClick={(e) => { e.stopPropagation(); setTransformMode('rotate'); }}
+              style={{
+                background: mode === 'rotate' ? '#F472B6' : 'transparent',
+                color: mode === 'rotate' ? '#0F0A28' : '#F472B6',
+                border: '1px solid #F472B6', borderRadius: '12px', padding: '3px 10px',
+                cursor: 'pointer', fontWeight: 700, fontFamily: 'monospace', fontSize: '11px',
+              }}
+            >↻ ROTATE [E]</button>
+          </div>
+        </Html>
+      )}
+    </group>
+  );
 }
 
+// ── LassoSurface ──────────────────────────────────────────────────────────────
+
 function LassoSurface({ points, isActive, mode, onClick, onTransformChange, setTransformMode }: any) {
-    const meshRef = useRef<THREE.Mesh>(null);
-    const { invalidate } = useThree();
+  const meshRef = useRef<THREE.Mesh>(null);
+  const { invalidate } = useThree();
 
-    const center = useMemo(() => {
-        if (!points || points.length === 0) return new THREE.Vector3();
-        const c = new THREE.Vector3();
-        points.forEach((p: THREE.Vector3) => c.add(p));
-        return c.multiplyScalar(1 / points.length);
-    }, [points]);
+  const center = useMemo(() => {
+    if (!points || points.length === 0) return new THREE.Vector3();
+    const c = new THREE.Vector3();
+    points.forEach((p: THREE.Vector3) => c.add(p));
+    return c.multiplyScalar(1 / points.length);
+  }, [points]);
 
-    const geometry = useMemo(() => {
-        if (!points || points.length < 3) return new THREE.BufferGeometry();
-        const geom = new THREE.BufferGeometry();
-        const positions: number[] = [];
-        for (let i = 1; i < points.length - 1; i++) {
-            positions.push(
-                points[0].x - center.x, points[0].y - center.y, points[0].z - center.z,
-                points[i].x - center.x, points[i].y - center.y, points[i].z - center.z,
-                points[i+1].x - center.x, points[i+1].y - center.y, points[i+1].z - center.z
-            );
-        }
-        geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-        geom.computeVertexNormals();
-        return geom;
-    }, [points, center]);
+  const geometry = useMemo(() => {
+    if (!points || points.length < 3) return new THREE.BufferGeometry();
+    const geom = new THREE.BufferGeometry();
+    const positions: number[] = [];
+    for (let i = 1; i < points.length - 1; i++) {
+      positions.push(
+        points[0].x - center.x, points[0].y - center.y, points[0].z - center.z,
+        points[i].x - center.x, points[i].y - center.y, points[i].z - center.z,
+        points[i+1].x - center.x, points[i+1].y - center.y, points[i+1].z - center.z,
+      );
+    }
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geom.computeVertexNormals();
+    return geom;
+  }, [points, center]);
 
-    // Explicit disposal on unmount or update
-    useEffect(() => {
-        return () => geometry.dispose();
-    }, [geometry]);
+  useEffect(() => { return () => geometry.dispose(); }, [geometry]);
 
-    const handleChange = () => {
-        if (meshRef.current && onTransformChange) {
-            const worldPos = new THREE.Vector3();
-            meshRef.current.getWorldPosition(worldPos);
-            onTransformChange(worldPos);
-        }
-        invalidate();
-    };
+  const handleChange = () => {
+    if (meshRef.current && onTransformChange) {
+      const worldPos = new THREE.Vector3();
+      meshRef.current.getWorldPosition(worldPos);
+      onTransformChange(worldPos);
+    }
+    invalidate();
+  };
 
-    return (
-        <group>
-            <mesh
-                ref={meshRef}
-                geometry={geometry}
-                position={center}
-                onPointerDown={(e) => { e.stopPropagation(); onClick(); }}
-            >
-                <meshStandardMaterial
-                    color={MATERIALS.cutter.color}
-                    transparent
-                    opacity={0.3}
-                    side={THREE.DoubleSide}
-                    depthWrite={false}
-                />
-            </mesh>
-            {isActive && meshRef.current && (
-                <TransformControls
-                    object={meshRef.current}
-                    mode={mode}
-                    onObjectChange={handleChange}
-                />
-            )}
-            {isActive && meshRef.current && (
-                <Html position={center} center distanceFactor={8} style={{ pointerEvents: 'none' }}>
-                    <div style={{
-                        display: 'flex', gap: '6px',
-                        background: 'rgba(15,10,40,0.85)',
-                        border: '1.5px solid rgba(255,255,255,0.15)',
-                        borderRadius: '20px', padding: '5px 10px',
-                        marginTop: '-72px', backdropFilter: 'blur(6px)',
-                        pointerEvents: 'all', userSelect: 'none',
-                        fontSize: '11px', fontWeight: 700, fontFamily: 'monospace', whiteSpace: 'nowrap',
-                    }}>
-                        <button onClick={(e) => { e.stopPropagation(); setTransformMode('translate'); }}
-                            style={{ background: mode === 'translate' ? '#22D3EE' : 'transparent', color: mode === 'translate' ? '#0F0A28' : '#22D3EE', border: '1px solid #22D3EE', borderRadius: '12px', padding: '3px 10px', cursor: 'pointer', fontWeight: 700, fontFamily: 'monospace', fontSize: '11px' }}
-                        >↔ MOVE [W]</button>
-                        <button onClick={(e) => { e.stopPropagation(); setTransformMode('rotate'); }}
-                            style={{ background: mode === 'rotate' ? '#F472B6' : 'transparent', color: mode === 'rotate' ? '#0F0A28' : '#F472B6', border: '1px solid #F472B6', borderRadius: '12px', padding: '3px 10px', cursor: 'pointer', fontWeight: 700, fontFamily: 'monospace', fontSize: '11px' }}
-                        >↻ ROTATE [E]</button>
-                    </div>
-                </Html>
-            )}
-        </group>
-    );
+  return (
+    <group>
+      <mesh ref={meshRef} geometry={geometry} position={center}
+        onPointerDown={(e) => { e.stopPropagation(); onClick(); }}
+      >
+        <meshStandardMaterial
+          color={MATERIALS.cutter.color} transparent opacity={0.3}
+          side={THREE.DoubleSide} depthWrite={false}
+        />
+      </mesh>
+      {isActive && meshRef.current && (
+        <TransformControls object={meshRef.current} mode={mode} onObjectChange={handleChange} />
+      )}
+      {isActive && meshRef.current && (
+        <Html position={center} center distanceFactor={8} style={{ pointerEvents: 'none' }}>
+          <div style={{
+            display: 'flex', gap: '6px',
+            background: 'rgba(15,10,40,0.85)', border: '1.5px solid rgba(255,255,255,0.15)',
+            borderRadius: '20px', padding: '5px 10px', marginTop: '-72px',
+            backdropFilter: 'blur(6px)', pointerEvents: 'all', userSelect: 'none',
+            fontSize: '11px', fontWeight: 700, fontFamily: 'monospace', whiteSpace: 'nowrap',
+          }}>
+            <button onClick={(e) => { e.stopPropagation(); setTransformMode('translate'); }}
+              style={{ background: mode === 'translate' ? '#22D3EE' : 'transparent', color: mode === 'translate' ? '#0F0A28' : '#22D3EE', border: '1px solid #22D3EE', borderRadius: '12px', padding: '3px 10px', cursor: 'pointer', fontWeight: 700, fontFamily: 'monospace', fontSize: '11px' }}
+            >↔ MOVE [W]</button>
+            <button onClick={(e) => { e.stopPropagation(); setTransformMode('rotate'); }}
+              style={{ background: mode === 'rotate' ? '#F472B6' : 'transparent', color: mode === 'rotate' ? '#0F0A28' : '#F472B6', border: '1px solid #F472B6', borderRadius: '12px', padding: '3px 10px', cursor: 'pointer', fontWeight: 700, fontFamily: 'monospace', fontSize: '11px' }}
+            >↻ ROTATE [E]</button>
+          </div>
+        </Html>
+      )}
+    </group>
+  );
 }
