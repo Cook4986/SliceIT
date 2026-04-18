@@ -410,9 +410,12 @@ export const useStore = create<SliceItStore>()(
                 if (n.lengthSq() > 0.0001) derivedNormal = [n.x, n.y, n.z];
             }
 
-            // Center = P1 (the anchor). P2 defines cut direction, P3 defines angle.
-            // The plane always frames the full mesh via bounding-sphere sizing.
-            derivedPosition = [p0.x, p0.y, p0.z];
+            // Position: always at the model's geometric center.
+            // Anchor clicks define orientation only — the plane must always
+            // overlap the mesh regardless of where on the invisible interaction
+            // plane the user clicked.
+            const mc = s.model.boundingSphere?.center ?? new THREE.Vector3();
+            derivedPosition = [mc.x, mc.y, mc.z];
         }
 
         return {
