@@ -80,9 +80,13 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
   //   The plane contains the drawn line and extends in the camera depth direction.
   // Perspective 3-point mode: normal = cross product of (P1→P2) × (P1→P3)
   const quaternion = useMemo(() => {
-    const zAxis = new THREE.Vector3(0, 0, 1);
 
     if (isOrthoView && vectorPoints.length >= 2) {
+      // P1→P2 defines the visible edge of the cutting plane.
+      // Build a full rotation matrix so the plane's local axes map to:
+      //   local X → edge direction (visible edge in viewport)
+      //   local Y → camera depth direction (extends toward "horizon")
+      //   local Z → normal (perpendicular to both = plane normal)
       const edge = new THREE.Vector3()
         .subVectors(vectorPoints[vectorPoints.length - 1], vectorPoints[0])
         .normalize();
@@ -90,10 +94,11 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
         ...VIEW_CONFIGS[activeViewIndex].position
       ).normalize();
       const normal = new THREE.Vector3().crossVectors(edge, viewDir).normalize();
-      if (normal.lengthSq() > 0.0001) {
-        return new THREE.Quaternion().setFromUnitVectors(zAxis, normal);
-      }
-      return new THREE.Quaternion();
+      if (normal.lengthSq() < 0.0001) return new THREE.Quaternion();
+      // Re-derive viewDir to ensure perfect orthogonality
+      const depth = new THREE.Vector3().crossVectors(normal, edge).normalize();
+      const m = new THREE.Matrix4().makeBasis(edge, depth, normal);
+      return new THREE.Quaternion().setFromRotationMatrix(m);
     }
 
     if (vectorPoints.length < 3) return new THREE.Quaternion();
@@ -328,7 +333,7 @@ function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick, 
           side={THREE.DoubleSide} depthWrite={false}
         />
       </mesh>
-      {/* Edge highlight */}
+      {/* Full quad outline */}
       <Line
         points={[
           new THREE.Vector3(-size/2, -size/2, 0).applyQuaternion(quaternion).add(center),
@@ -338,6 +343,17 @@ function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick, 
           new THREE.Vector3(-size/2, -size/2, 0).applyQuaternion(quaternion).add(center),
         ]}
         color={COLORS.accent.pink} lineWidth={1.5} transparent opacity={0.4}
+      />
+      {/* Emboldened camera-facing edge (local X axis at y=0).
+          In ortho views, this is the edge the user drew — the only visible
+          part of the plane when viewed edge-on. */}
+      <Line
+        points={[
+          new THREE.Vector3(-size/2, 0, 0).applyQuaternion(quaternion).add(center),
+          new THREE.Vector3( size/2, 0, 0).applyQuaternion(quaternion).add(center),
+        ]}
+        color={COLORS.accent.cyan} lineWidth={4} transparent opacity={0.9}
+        depthWrite={false}
       />
       {isActive && meshRef.current && (
         <TransformControls object={meshRef.current} mode={mode} onObjectChange={handleChange} />
