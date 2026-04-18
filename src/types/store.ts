@@ -122,13 +122,25 @@ export interface OperationState {
 // History State (Undo/Redo)
 // ============================================================
 
-export interface HistoryEntry {
-  /** Serialized geometry data (positions + indices) */
+/** Serialised geometry snapshot pushed after each slice. */
+export interface GeometryEntry {
+  kind: 'geometry';
   positions: Float32Array;
   indices: Uint32Array | null;
   normals: Float32Array | null;
   type: ModelType;
 }
+
+/** Lightweight snapshot of knife/lasso anchor state pushed before each addAnchor call. */
+export interface PointsEntry {
+  kind: 'points';
+  points: [number, number, number][];
+  placementIndex: number;
+  isDrawingComplete: boolean;
+}
+
+/** Discriminated union — the single undo/redo stack holds both kinds. */
+export type HistoryEntry = GeometryEntry | PointsEntry;
 
 // ============================================================
 // Toast State
@@ -194,6 +206,7 @@ export interface SliceItStore {
   updatePoint: (index: number, pos: [number, number, number]) => void;
   addAnchor: (pos: [number, number, number]) => void;
   updatePlaneNormal: (normal: [number, number, number]) => void;
+  updatePlanePosition: (pos: [number, number, number]) => void;
   completeDrawing: () => void;
   cancelDrawing: () => void;
 

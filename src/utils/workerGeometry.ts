@@ -1,13 +1,13 @@
 import * as THREE from 'three';
-import type { HistoryEntry, ModelType } from '../types/store';
+import type { GeometryEntry, ModelType } from '../types/store';
 
 /**
- * Serialize a BufferGeometry into transferable arrays for undo/redo storage.
+ * Serialize a BufferGeometry into a GeometryEntry for undo/redo storage.
  */
 export function serializeGeometry(
   geometry: THREE.BufferGeometry,
   type: ModelType
-): HistoryEntry {
+): GeometryEntry {
   const positions = new Float32Array(geometry.attributes.position.array);
   const normals = geometry.attributes.normal
     ? new Float32Array(geometry.attributes.normal.array)
@@ -16,13 +16,13 @@ export function serializeGeometry(
     ? new Uint32Array(geometry.index.array)
     : null;
 
-  return { positions, indices, normals, type };
+  return { kind: 'geometry', positions, indices, normals, type };
 }
 
 /**
- * Deserialize a HistoryEntry back into a BufferGeometry.
+ * Deserialize a GeometryEntry back into a BufferGeometry.
  */
-export function deserializeGeometry(entry: HistoryEntry): THREE.BufferGeometry {
+export function deserializeGeometry(entry: GeometryEntry): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(entry.positions, 3));
 
@@ -41,3 +41,4 @@ export function deserializeGeometry(entry: HistoryEntry): THREE.BufferGeometry {
   geometry.computeBoundingSphere();
   return geometry;
 }
+

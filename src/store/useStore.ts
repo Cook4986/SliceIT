@@ -8,6 +8,7 @@ import type {
   ExportFormat,
   ToastType,
   ToolTransform,
+  PointsEntry,
 } from '../types/store';
 import { VIEW_CONFIGS } from '../config/viewConfigs';
 import { DEFAULT_TOOL_TRANSFORM, MAX_UNDO_STATES, MAX_TOASTS, TOAST_DURATION } from '../config/constants';
@@ -16,6 +17,7 @@ import { detectModelType, centerGeometry, normalizeScale } from '../utils/geomet
 import { serializeGeometry } from '../utils/workerGeometry';
 import { exportGeometry } from '../exporters/exporterFactory';
 import { getSlicingAPI } from '../workers/slicing.api';
+import { validateFileSize } from '../utils/fileUtils';
 
 // ============================================================
 // Multi-window Sync Management
@@ -102,6 +104,17 @@ export const useStore = create<SliceItStore>()(
     // === Model Actions ===
 
     importModel: async (file: File) => {
+      // Feature 4: enforce file size limits before starting any heavy work.
+      const sizeCheck = validateFileSize(file.size);
+      if (!sizeCheck.valid) {
+        get().addToast('error', sizeCheck.message!);
+        return;
+      }
+      if (sizeCheck.warning) {
+        get().addToast('warning', sizeCheck.message!);
+        // Performance advisory only — loading continues.
+      }
+
       try {
         set(state => ({
           operation: { ...state.operation, isSlicing: true, statusText: 'Loading...' },
@@ -267,8 +280,6 @@ export const useStore = create<SliceItStore>()(
         tool: {
           ...state.tool,
           activeTool: tool,
-          // Knife/lasso start with one point following the mouse
-          // Primitive tools don't use points
           points: isKnifeOrLasso ? [initialPoint] : [],
           drawingPoints: [],
           isDrawing: isKnifeOrLasso,
@@ -279,6 +290,10 @@ export const useStore = create<SliceItStore>()(
           planeNormal: [0, 1, 0],
           planePosition: [0, 0, 0],
         },
+        // Feature 2: clear stale point-placement history when the tool changes
+        // so geometry undo/redo history is not polluted with orphaned entries.
+        undoStack: state.undoStack.filter(e => e.kind !== 'points'),
+        redoStack: state.redoStack.filter(e => e.kind !== 'points'),
       }));
     },
 
@@ -316,6 +331,15 @@ export const useStore = create<SliceItStore>()(
       set(s => {
         const { activeTool, placementIndex, points } = s.tool;
         if (placementIndex === -1) return {}; // already complete, ignore
+
+        // Feature 2: snapshot current point state BEFORE the mutation so the
+        // user can undo this individual anchor placement.
+        const pointsSnapshot: PointsEntry = {
+          kind: 'points',
+          points: points.map(p => [...p] as [number, number, number]),
+          placementIndex,
+          isDrawingComplete: s.tool.isDrawingComplete,
+        };
         
         // Lock the current point at placementIndex with the click position
         const newPoints = [...points];
@@ -340,19 +364,53 @@ export const useStore = create<SliceItStore>()(
             newPoints.push([...pos] as [number, number, number]);
         }
 
-        return { tool: { 
-            ...s.tool, 
-            points: newPoints, 
+        // Compute initial plane normal and set position to the model's geometric center
+        // whenever drawing completes (knife: 3 pts locked; lasso: polygon closed).
+        // The 3 clicks define orientation only; the plane spawns centered on the model
+        // so the model always straddles the plane at deployment. The user can then
+        // translate/rotate freely from there.
+        let derivedNormal: [number, number, number] = s.tool.planeNormal;
+        let derivedPosition: [number, number, number] = s.tool.planePosition;
+        if (isDrawingComplete && activeTool === 'knife' && newPoints.length >= 3) {
+            const p0 = new THREE.Vector3(...newPoints[0]);
+            const p1 = new THREE.Vector3(...newPoints[1]);
+            const p2 = new THREE.Vector3(...newPoints[2]);
+            const v1 = new THREE.Vector3().subVectors(p1, p0).normalize();
+            const v2 = new THREE.Vector3().subVectors(p2, p0).normalize();
+            const n = new THREE.Vector3().crossVectors(v1, v2).normalize();
+            if (n.lengthSq() > 0.0001) {
+                derivedNormal = [n.x, n.y, n.z];
+            }
+            // Spawn at the model's bounding sphere center (guaranteed [0,0,0] after
+            // centerGeometry(), but reading from state is semantically correct).
+            const bc = s.model.boundingSphere?.center;
+            derivedPosition = bc ? [bc.x, bc.y, bc.z] : [0, 0, 0];
+        }
+
+        return {
+          tool: {
+            ...s.tool,
+            points: newPoints,
             placementIndex: newPlacementIndex,
             isDrawingComplete,
-            isDrawing: !isDrawingComplete
-        } };
+            isDrawing: !isDrawingComplete,
+            planeNormal: derivedNormal,
+            planePosition: derivedPosition,
+          },
+          // Push snapshot and clear redo (new intent = different future)
+          undoStack: [...s.undoStack, pointsSnapshot].slice(-MAX_UNDO_STATES),
+          redoStack: [],
+        };
       });
     },
 
     updatePlaneNormal: (normal: [number, number, number], remote = false) => {
       set(s => ({ tool: { ...s.tool, planeNormal: normal } }));
       if (!remote) syncChannel.postMessage({ type: 'KNIFE_NORMAL_SYNC', normal });
+    },
+
+    updatePlanePosition: (pos: [number, number, number]) => {
+      set(s => ({ tool: { ...s.tool, planePosition: pos } }));
     },
 
     completeDrawing: () => {
@@ -371,6 +429,9 @@ export const useStore = create<SliceItStore>()(
           activeTool: null,
           placementIndex: -1,
         },
+        // Feature 2: clear orphaned point history when drawing is cancelled
+        undoStack: state.undoStack.filter(e => e.kind !== 'points'),
+        redoStack: state.redoStack.filter(e => e.kind !== 'points'),
       }));
     },
 
@@ -402,10 +463,17 @@ export const useStore = create<SliceItStore>()(
         if (model.type === 'mesh') {
           addLog('Dispatching geometry to worker...');
           
-          let origin: [number, number, number] = [0, 0, 0];
-          let normal: [number, number, number] = [0, 1, 0];
+          // Use the stored plane position/normal.
+          // planePosition is updated in real-time by the TransformControls write-back
+          // in CuttingPlane (defaults to [0,0,0] — origin-lock).
+          // planeNormal is derived from the 3 clicked points and updated by rotation.
+          let origin: [number, number, number] = [...tool.planePosition] as [number, number, number];
+          let normal: [number, number, number] = [...tool.planeNormal] as [number, number, number];
 
-          if (tool.points.length >= 3) {
+          // If the normal is still at default [0,1,0] but we have 3 points, recompute
+          // from the points as a safety net for cases where updatePlaneNormal wasn't called.
+          const normalIsDefault = normal[0] === 0 && normal[1] === 1 && normal[2] === 0;
+          if (normalIsDefault && tool.points.length >= 3) {
               const p0 = new THREE.Vector3(...tool.points[0]);
               const p1 = new THREE.Vector3(...tool.points[1]);
               const p2 = new THREE.Vector3(...tool.points[2]);
@@ -415,7 +483,6 @@ export const useStore = create<SliceItStore>()(
               if (n.lengthSq() > 0.0001) {
                   normal = [n.x, n.y, n.z];
               }
-              origin = [p0.x, p0.y, p0.z];
           }
 
           const result = await api.subtractMeshWithPlane(
@@ -433,6 +500,14 @@ export const useStore = create<SliceItStore>()(
               slicedGeometry.setIndex(new THREE.BufferAttribute(result.indices, 1));
           }
           slicedGeometry.computeVertexNormals();
+          // Bug 4b fix: add zeroed UV coords so GLTFExporter includes this mesh
+          // in the scene nodes array. Without UVs the exporter silently omits it,
+          // producing a valid-looking but empty GLTF that Blender rejects.
+          const posCount = slicedGeometry.attributes.position.count;
+          slicedGeometry.setAttribute(
+            'uv',
+            new THREE.Float32BufferAttribute(new Float32Array(posCount * 2), 2)
+          );
           slicedGeometry.computeBoundingSphere();
 
           set(s => ({
@@ -469,12 +544,39 @@ export const useStore = create<SliceItStore>()(
     // === History Actions ===
 
     undo: () => {
-      const { undoStack, model } = get();
-      if (undoStack.length === 0 || !model.geometry) return;
+      const { undoStack, model, tool } = get();
+      if (undoStack.length === 0) return;
 
-      const currentEntry = serializeGeometry(model.geometry, model.type!);
       const newUndoStack = [...undoStack];
       const previousEntry = newUndoStack.pop()!;
+
+      // Feature 2: dispatch on entry kind
+      if (previousEntry.kind === 'points') {
+        // Undo an anchor placement — restore tool points state
+        const currentSnapshot: PointsEntry = {
+          kind: 'points',
+          points: tool.points.map(p => [...p] as [number, number, number]),
+          placementIndex: tool.placementIndex,
+          isDrawingComplete: tool.isDrawingComplete,
+        };
+        set(state => ({
+          undoStack: newUndoStack,
+          redoStack: [...state.redoStack, currentSnapshot],
+          tool: {
+            ...state.tool,
+            points: previousEntry.points,
+            placementIndex: previousEntry.placementIndex,
+            isDrawingComplete: previousEntry.isDrawingComplete,
+            isDrawing: !previousEntry.isDrawingComplete,
+          },
+        }));
+        get().addToast('info', 'Undo anchor');
+        return;
+      }
+
+      // Geometry undo (kind === 'geometry') — restore sliced mesh
+      if (!model.geometry) return;
+      const currentEntry = serializeGeometry(model.geometry, model.type!);
 
       const restoredGeometry = new THREE.BufferGeometry();
       restoredGeometry.setAttribute('position', new THREE.Float32BufferAttribute(previousEntry.positions, 3));
@@ -501,12 +603,38 @@ export const useStore = create<SliceItStore>()(
     },
 
     redo: () => {
-      const { redoStack, model } = get();
-      if (redoStack.length === 0 || !model.geometry) return;
+      const { redoStack, model, tool } = get();
+      if (redoStack.length === 0) return;
 
-      const currentEntry = serializeGeometry(model.geometry, model.type!);
       const newRedoStack = [...redoStack];
       const nextEntry = newRedoStack.pop()!;
+
+      // Feature 2: dispatch on entry kind
+      if (nextEntry.kind === 'points') {
+        const currentSnapshot: PointsEntry = {
+          kind: 'points',
+          points: tool.points.map(p => [...p] as [number, number, number]),
+          placementIndex: tool.placementIndex,
+          isDrawingComplete: tool.isDrawingComplete,
+        };
+        set(state => ({
+          undoStack: [...state.undoStack, currentSnapshot],
+          redoStack: newRedoStack,
+          tool: {
+            ...state.tool,
+            points: nextEntry.points,
+            placementIndex: nextEntry.placementIndex,
+            isDrawingComplete: nextEntry.isDrawingComplete,
+            isDrawing: !nextEntry.isDrawingComplete,
+          },
+        }));
+        get().addToast('info', 'Redo anchor');
+        return;
+      }
+
+      // Geometry redo (kind === 'geometry')
+      if (!model.geometry) return;
+      const currentEntry = serializeGeometry(model.geometry, model.type!);
 
       const restoredGeometry = new THREE.BufferGeometry();
       restoredGeometry.setAttribute('position', new THREE.Float32BufferAttribute(nextEntry.positions, 3));

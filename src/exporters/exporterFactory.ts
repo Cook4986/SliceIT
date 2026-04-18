@@ -15,9 +15,23 @@ export function exportGeometry(
 ): void {
   const baseName = originalFilename.replace(/\.[^.]+$/, '');
 
+  // Bug 4a fix: ensure geometry is export-ready.
+  // Many exporters (GLTFExporter) require UV coordinates to include the mesh
+  // in the scene nodes array. Add a zeroed UV set if none exists.
+  if (!geometry.attributes.uv) {
+    const posCount = geometry.attributes.position.count;
+    geometry.setAttribute(
+      'uv',
+      new THREE.Float32BufferAttribute(new Float32Array(posCount * 2), 2)
+    );
+  }
+
   // Create a temp mesh for exporters that need a scene object
   const material = new THREE.MeshStandardMaterial();
   const mesh = new THREE.Mesh(geometry, material);
+  // Give the mesh a name so GLTFExporter populates the nodes array.
+  // Without this, Blender throws "NoneType object is not iterable" on scene.nodes.
+  mesh.name = baseName || 'SliceIT_mesh';
   const scene = new THREE.Scene();
   scene.add(mesh);
 
@@ -52,7 +66,10 @@ export function exportGeometry(
         scene,
         (result) => {
           if (result instanceof ArrayBuffer) {
-            downloadBlob(result, `${baseName}.glb`, 'application/octet-stream');
+            // Bug 4a fix: GLB spec requires the BIN chunk to be 4-byte aligned.
+            // Pad the buffer so MeshLab / Blender don't reject it.
+            const padded = padTo4Bytes(result);
+            downloadBlob(padded, `${baseName}.glb`, 'application/octet-stream');
           } else {
             downloadText(JSON.stringify(result), `${baseName}.gltf`, 'model/gltf+json');
           }
@@ -70,6 +87,20 @@ export function exportGeometry(
   scene.remove(mesh);
   material.dispose();
 }
+
+/**
+ * Pad an ArrayBuffer to the next 4-byte boundary with zero bytes.
+ * Required by the GLB spec: every chunk length must be a multiple of 4.
+ */
+function padTo4Bytes(buffer: ArrayBuffer): ArrayBuffer {
+  const remainder = buffer.byteLength % 4;
+  if (remainder === 0) return buffer;
+  const padded = new ArrayBuffer(buffer.byteLength + (4 - remainder));
+  new Uint8Array(padded).set(new Uint8Array(buffer));
+  return padded;
+}
+
+
 
 function downloadBlob(data: ArrayBuffer | DataView, filename: string, mime: string): void {
   const bufferData = data instanceof DataView ? data.buffer : data;

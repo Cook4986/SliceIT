@@ -53,6 +53,10 @@ export function MainContent() {
       }}
     >
       {/* HTML Viewport Grid */}
+      {/* Bug 3 fix: onContextMenu removed — it was intercepting right-click
+          across all viewports and disabling OrbitControls rotate/pan.
+          The FloatingInspector is now accessible only via the standalone
+          SliceIT button in the header. */}
       <div 
         className="viewport-grid" 
         style={{ 
@@ -60,13 +64,6 @@ export function MainContent() {
           zIndex: 1,
           gridTemplateColumns: `repeat(${layout.columns}, 1fr)`,
           gridTemplateRows: `repeat(${layout.rows}, 1fr)`,
-        }}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          useStore.getState().setUIState({ 
-            showFloatingInspector: true, 
-            floatingInspectorPos: [e.clientX, e.clientY] 
-          });
         }}
       >
         {layout.configs.map((config, i) => (

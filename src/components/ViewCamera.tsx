@@ -89,6 +89,17 @@ export function ViewCamera({ config, viewIndex }: ViewCameraProps) {
     }
   }, [geometry]);
 
+  // Bug 1 fix: if geometry was already loaded before this Canvas View mounted
+  // (happens because MainContent delays Canvas behind a requestAnimationFrame),
+  // re-run fitCamera once on mount so the model renders immediately.
+  useEffect(() => {
+    if (geometry) {
+      fitCamera();
+      invalidate();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /**
    * PUBLISHER:
    * Maps current view state to a universal 'zoomScale'.
@@ -156,6 +167,12 @@ export function ViewCamera({ config, viewIndex }: ViewCameraProps) {
   return (
     <group>
       {/* Invisible plane to catch all pointer events for this view */}
+      {/* Bug 2 fix: use onClick (not onPointerDown) so OrbitControls' drag-start
+          gesture on pointerdown doesn't compete. onClick fires only after a
+          genuine click (down+up with no drag), matching what users expect.
+          stopPropagation is called unconditionally when knife/lasso is active
+          so every click is fully consumed and subsequent anchors register on
+          the first attempt. */}
       <mesh
         visible={false}
         position={[0, 0, 0]}
@@ -163,15 +180,15 @@ export function ViewCamera({ config, viewIndex }: ViewCameraProps) {
           new THREE.Vector3(0, 0, 1),
           new THREE.Vector3(...config.position).normalize()
         )}
-        onPointerDown={(e) => {
+        onClick={(e) => {
             const state = useStore.getState();
-            if ((state.tool.activeTool === 'knife' || state.tool.activeTool === 'lasso') && 
-                state.tool.placementIndex !== -1 && 
-                state.sharedPointer) {
-                // Ensure we interact with the active view
-                state.setActiveViewIndex(viewIndex);
-                e.stopPropagation(); // Prevent orbit controls from jumping if needed
-                state.addAnchor(state.sharedPointer);
+            if (state.tool.activeTool === 'knife' || state.tool.activeTool === 'lasso') {
+                // Always consume the click when a drawing tool is active
+                e.stopPropagation();
+                if (state.tool.placementIndex !== -1 && state.sharedPointer) {
+                    state.setActiveViewIndex(viewIndex);
+                    state.addAnchor(state.sharedPointer);
+                }
             }
         }}
       >

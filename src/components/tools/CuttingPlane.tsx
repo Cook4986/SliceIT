@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect, useMemo } from 'react';
 import * as THREE from 'three';
-import { TransformControls, Sphere, Line } from '@react-three/drei';
+import { TransformControls, Sphere, Line, Html } from '@react-three/drei';
 import { useStore } from '../../store/useStore';
 import { MATERIALS, COLORS } from '../../config/theme';
 import { useThree } from '@react-three/fiber';
@@ -20,6 +20,8 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
   
   const updatePoint = useStore(s => s.updatePoint);
   const setTransformMode = useStore(s => s.setTransformMode);
+  const updatePlaneNormal = useStore(s => s.updatePlaneNormal);
+  const updatePlanePosition = useStore(s => s.updatePlanePosition);
   
   const [activeHandleIndex, setActiveHandleIndex] = useState<number | 'plane' | null>(null);
 
@@ -55,12 +57,6 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
     return points.filter(p => p && p.length === 3).map(p => new THREE.Vector3(...p));
   }, [points, isKnifeOrLasso]);
   
-  const center = useMemo(() => {
-    if (vectorPoints.length < 1) return new THREE.Vector3(0, 0, 0);
-    const sum = new THREE.Vector3();
-    vectorPoints.forEach(p => sum.add(p));
-    return sum.multiplyScalar(1 / vectorPoints.length);
-  }, [vectorPoints]);
 
   const quaternion = useMemo(() => {
     if (vectorPoints.length < 3) return new THREE.Quaternion();
@@ -93,60 +89,84 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
     setActiveHandleIndex(null);
   }, [activeTool]);
 
+  // Feature 1: once all 3 knife points are placed, hide the path and auto-activate
+  // the translate widget so the user gets direct plane manipulation immediately.
+  useEffect(() => {
+    if (isDrawingComplete) {
+      setActiveHandleIndex('plane');
+    }
+  }, [isDrawingComplete]);
+
   // Early return AFTER all hooks
   if (!isKnifeOrLasso) return null;
   if (vectorPoints.length === 0) return null;
 
   return (
     <group>
-      {/* Path Wireframe */}
-      {vectorPoints.length > 1 && (
-        <Line
-          points={[
-            ...vectorPoints, 
-            placementIndex === -1 ? vectorPoints[0] : vectorPoints[vectorPoints.length - 1]
-          ]}
-          color={COLORS.accent.cyan}
-          lineWidth={2.5}
-          transparent
-          opacity={0.8}
-        />
-      )}
+      {/* Path and anchor markers — visible ONLY while placing points.
+          Once drawing is complete they are hidden to declutter the viewports,
+          leaving only the cutting plane + TransformControls widget. */}
+      {!isDrawingComplete && (
+        <>
+          {/* Path Wireframe */}
+          {vectorPoints.length > 1 && (
+            <Line
+              points={[
+                ...vectorPoints, 
+                placementIndex === -1 ? vectorPoints[0] : vectorPoints[vectorPoints.length - 1]
+              ]}
+              color={COLORS.accent.cyan}
+              lineWidth={2.5}
+              transparent
+              opacity={0.8}
+            />
+          )}
 
-      {/* Anchor Spheres */}
-      {vectorPoints.map((p, i) => (
-        <group key={`h-${i}`}>
-            <Sphere 
-                args={[0.05, 12, 12]} 
-                position={p}
-                onPointerDown={(e) => {
-                    e.stopPropagation();
-                    // Only allow handle selection when drawing is complete
-                    if (isDrawingComplete && isActive) {
-                        setActiveHandleIndex(i);
-                    }
-                }}
-            >
-                <meshStandardMaterial 
-                    color={activeHandleIndex === i ? COLORS.accent.yellow : COLORS.accent.cyan} 
-                    emissive={activeHandleIndex === i ? '#FACC15' : '#22D3EE'}
-                    emissiveIntensity={activeHandleIndex === i ? 0.8 : 0.3}
-                />
-            </Sphere>
-        </group>
-      ))}
+          {/* Anchor Spheres */}
+          {vectorPoints.map((p, i) => (
+            <group key={`h-${i}`}>
+                <Sphere 
+                    args={[0.05, 12, 12]} 
+                    position={p}
+                    onPointerDown={(e) => {
+                        e.stopPropagation();
+                        if (isDrawingComplete && isActive) {
+                            setActiveHandleIndex(i);
+                        }
+                    }}
+                >
+                    <meshStandardMaterial 
+                        color={activeHandleIndex === i ? COLORS.accent.yellow : COLORS.accent.cyan} 
+                        emissive={activeHandleIndex === i ? '#FACC15' : '#22D3EE'}
+                        emissiveIntensity={activeHandleIndex === i ? 0.8 : 0.3}
+                    />
+                </Sphere>
+            </group>
+          ))}
+        </>
+      )}
 
       {/* Cutting Surface — only show when drawing is complete (all points placed) */}
       {isDrawingComplete && vectorPoints.length >= 3 && (
         <group>
             {activeTool === 'knife' ? (
                 <PlaneSurface 
-                    center={center} 
+                    // Origin-lock: orientation from the 3 clicks, position always at [0,0,0].
+                    // The translate/rotate widget lets the user refine from there.
+                    center={new THREE.Vector3(0, 0, 0)}
                     quaternion={quaternion} 
                     isActive={isActive && activeHandleIndex === 'plane'}
                     mode={transformMode}
                     planeSize={planeSize}
                     onClick={() => setActiveHandleIndex('plane')}
+                    onTransformChange={(pos: THREE.Vector3, quat: THREE.Quaternion) => {
+                        // Write the plane's live position back to the store so executeSlice
+                        // uses the correct origin after the user drags/rotates.
+                        updatePlanePosition([pos.x, pos.y, pos.z]);
+                        const n = new THREE.Vector3(0, 0, 1).applyQuaternion(quat).normalize();
+                        updatePlaneNormal([n.x, n.y, n.z]);
+                    }}
+                    setTransformMode={setTransformMode}
                 />
             ) : (
                 <LassoSurface 
@@ -154,6 +174,10 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
                     isActive={isActive && activeHandleIndex === 'plane'}
                     mode={transformMode}
                     onClick={() => setActiveHandleIndex('plane')}
+                    onTransformChange={(pos: THREE.Vector3) => {
+                        updatePlanePosition([pos.x, pos.y, pos.z]);
+                    }}
+                    setTransformMode={setTransformMode}
                 />
             )}
         </group>
@@ -162,10 +186,21 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
   );
 }
 
-function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick }: any) {
+function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick, onTransformChange, setTransformMode }: any) {
     const meshRef = useRef<THREE.Mesh>(null);
     const { invalidate } = useThree();
     const size = planeSize || 3;
+
+    const handleChange = () => {
+        if (meshRef.current && onTransformChange) {
+            const worldPos = new THREE.Vector3();
+            const worldQuat = new THREE.Quaternion();
+            meshRef.current.getWorldPosition(worldPos);
+            meshRef.current.getWorldQuaternion(worldQuat);
+            onTransformChange(worldPos, worldQuat);
+        }
+        invalidate();
+    };
 
     return (
         <group>
@@ -202,14 +237,69 @@ function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick }
                 <TransformControls
                     object={meshRef.current}
                     mode={mode}
-                    onObjectChange={() => invalidate()}
+                    onObjectChange={handleChange}
                 />
+            )}
+            {/* Mode-toggle pill — visible whenever the plane is active */}
+            {isActive && meshRef.current && (
+                <Html
+                    position={center}
+                    style={{ pointerEvents: 'none' }}
+                    center
+                    distanceFactor={8}
+                >
+                    <div style={{
+                        display: 'flex',
+                        gap: '6px',
+                        background: 'rgba(15,10,40,0.85)',
+                        border: '1.5px solid rgba(255,255,255,0.15)',
+                        borderRadius: '20px',
+                        padding: '5px 10px',
+                        marginTop: '-72px',
+                        backdropFilter: 'blur(6px)',
+                        pointerEvents: 'all',
+                        userSelect: 'none',
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        fontFamily: 'monospace',
+                        whiteSpace: 'nowrap',
+                    }}>
+                        <button
+                            onClick={(e) => { e.stopPropagation(); setTransformMode('translate'); }}
+                            style={{
+                                background: mode === 'translate' ? '#22D3EE' : 'transparent',
+                                color: mode === 'translate' ? '#0F0A28' : '#22D3EE',
+                                border: '1px solid #22D3EE',
+                                borderRadius: '12px',
+                                padding: '3px 10px',
+                                cursor: 'pointer',
+                                fontWeight: 700,
+                                fontFamily: 'monospace',
+                                fontSize: '11px',
+                            }}
+                        >↔ MOVE [W]</button>
+                        <button
+                            onClick={(e) => { e.stopPropagation(); setTransformMode('rotate'); }}
+                            style={{
+                                background: mode === 'rotate' ? '#F472B6' : 'transparent',
+                                color: mode === 'rotate' ? '#0F0A28' : '#F472B6',
+                                border: '1px solid #F472B6',
+                                borderRadius: '12px',
+                                padding: '3px 10px',
+                                cursor: 'pointer',
+                                fontWeight: 700,
+                                fontFamily: 'monospace',
+                                fontSize: '11px',
+                            }}
+                        >↻ ROTATE [E]</button>
+                    </div>
+                </Html>
             )}
         </group>
     );
 }
 
-function LassoSurface({ points, isActive, mode, onClick }: any) {
+function LassoSurface({ points, isActive, mode, onClick, onTransformChange, setTransformMode }: any) {
     const meshRef = useRef<THREE.Mesh>(null);
     const { invalidate } = useThree();
 
@@ -241,6 +331,15 @@ function LassoSurface({ points, isActive, mode, onClick }: any) {
         return () => geometry.dispose();
     }, [geometry]);
 
+    const handleChange = () => {
+        if (meshRef.current && onTransformChange) {
+            const worldPos = new THREE.Vector3();
+            meshRef.current.getWorldPosition(worldPos);
+            onTransformChange(worldPos);
+        }
+        invalidate();
+    };
+
     return (
         <group>
             <mesh
@@ -261,8 +360,28 @@ function LassoSurface({ points, isActive, mode, onClick }: any) {
                 <TransformControls
                     object={meshRef.current}
                     mode={mode}
-                    onObjectChange={() => invalidate()}
+                    onObjectChange={handleChange}
                 />
+            )}
+            {isActive && meshRef.current && (
+                <Html position={center} center distanceFactor={8} style={{ pointerEvents: 'none' }}>
+                    <div style={{
+                        display: 'flex', gap: '6px',
+                        background: 'rgba(15,10,40,0.85)',
+                        border: '1.5px solid rgba(255,255,255,0.15)',
+                        borderRadius: '20px', padding: '5px 10px',
+                        marginTop: '-72px', backdropFilter: 'blur(6px)',
+                        pointerEvents: 'all', userSelect: 'none',
+                        fontSize: '11px', fontWeight: 700, fontFamily: 'monospace', whiteSpace: 'nowrap',
+                    }}>
+                        <button onClick={(e) => { e.stopPropagation(); setTransformMode('translate'); }}
+                            style={{ background: mode === 'translate' ? '#22D3EE' : 'transparent', color: mode === 'translate' ? '#0F0A28' : '#22D3EE', border: '1px solid #22D3EE', borderRadius: '12px', padding: '3px 10px', cursor: 'pointer', fontWeight: 700, fontFamily: 'monospace', fontSize: '11px' }}
+                        >↔ MOVE [W]</button>
+                        <button onClick={(e) => { e.stopPropagation(); setTransformMode('rotate'); }}
+                            style={{ background: mode === 'rotate' ? '#F472B6' : 'transparent', color: mode === 'rotate' ? '#0F0A28' : '#F472B6', border: '1px solid #F472B6', borderRadius: '12px', padding: '3px 10px', cursor: 'pointer', fontWeight: 700, fontFamily: 'monospace', fontSize: '11px' }}
+                        >↻ ROTATE [E]</button>
+                    </div>
+                </Html>
             )}
         </group>
     );
