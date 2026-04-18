@@ -62,17 +62,58 @@ export function exportGeometry(
     case 'glb': {
       const exporter = new GLTFExporter();
       const binary = format === 'glb';
+
+      // Deep-clone geometry so the exporter gets fresh, well-typed attributes.
+      // Manifold/CSG worker returns raw typed arrays that can confuse the
+      // GLTFExporter's internal buffer-view serializer (producing an empty BIN
+      // chunk). Rebuilding guarantees clean THREE.BufferAttributes throughout.
+      const exportGeo = new THREE.BufferGeometry();
+
+      // Position — always copy into a fresh Float32Array
+      const srcPos = geometry.attributes.position;
+      exportGeo.setAttribute('position',
+        new THREE.Float32BufferAttribute(
+          new Float32Array(srcPos.array as Float32Array), 3
+        )
+      );
+
+      // Index — copy to Uint32Array for large meshes
+      if (geometry.index) {
+        exportGeo.setIndex(
+          new THREE.BufferAttribute(new Uint32Array(geometry.index.array as Uint32Array), 1)
+        );
+      }
+
+      // Normals — recompute from the cloned geometry for consistency
+      exportGeo.computeVertexNormals();
+
+      // UVs — zeroed, required for GLTFExporter to include the mesh
+      const vertCount = exportGeo.attributes.position.count;
+      if (vertCount === 0) {
+        console.warn('[SliceIT Export] Geometry has 0 vertices — nothing to export.');
+        return;
+      }
+      exportGeo.setAttribute('uv',
+        new THREE.Float32BufferAttribute(new Float32Array(vertCount * 2), 2)
+      );
+
+      const exportMesh = new THREE.Mesh(exportGeo, new THREE.MeshStandardMaterial());
+      exportMesh.name = baseName || 'SliceIT_mesh';
+      const exportScene = new THREE.Scene();
+      exportScene.add(exportMesh);
+
       exporter.parse(
-        scene,
+        exportScene,
         (result) => {
           if (result instanceof ArrayBuffer) {
-            // Bug 4a fix: GLB spec requires the BIN chunk to be 4-byte aligned.
-            // Pad the buffer so MeshLab / Blender don't reject it.
-            const padded = padTo4Bytes(result);
-            downloadBlob(padded, `${baseName}.glb`, 'application/octet-stream');
+            downloadBlob(result, `${baseName}.glb`, 'application/octet-stream');
           } else {
             downloadText(JSON.stringify(result), `${baseName}.gltf`, 'model/gltf+json');
           }
+          // Cleanup
+          exportScene.remove(exportMesh);
+          exportGeo.dispose();
+          exportMesh.material.dispose();
         },
         (error) => { throw error; },
         { binary }
@@ -88,17 +129,7 @@ export function exportGeometry(
   material.dispose();
 }
 
-/**
- * Pad an ArrayBuffer to the next 4-byte boundary with zero bytes.
- * Required by the GLB spec: every chunk length must be a multiple of 4.
- */
-function padTo4Bytes(buffer: ArrayBuffer): ArrayBuffer {
-  const remainder = buffer.byteLength % 4;
-  if (remainder === 0) return buffer;
-  const padded = new ArrayBuffer(buffer.byteLength + (4 - remainder));
-  new Uint8Array(padded).set(new Uint8Array(buffer));
-  return padded;
-}
+
 
 
 
