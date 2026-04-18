@@ -381,10 +381,10 @@ export const useStore = create<SliceItStore>()(
             if (n.lengthSq() > 0.0001) {
                 derivedNormal = [n.x, n.y, n.z];
             }
-            // Spawn at the model's bounding sphere center (guaranteed [0,0,0] after
-            // centerGeometry(), but reading from state is semantically correct).
-            const bc = s.model.boundingSphere?.center;
-            derivedPosition = bc ? [bc.x, bc.y, bc.z] : [0, 0, 0];
+            // P1 (p0) is the plane's position anchor — the plane spawns exactly at the
+            // first click. P2 and P3 define the tilt via their vectors from P1.
+            // Off-center clicks → off-center plane; P2/P3 only spin the orientation.
+            derivedPosition = [p0.x, p0.y, p0.z];
         }
 
         return {

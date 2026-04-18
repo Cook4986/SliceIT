@@ -22,6 +22,7 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
   const setTransformMode = useStore(s => s.setTransformMode);
   const updatePlaneNormal = useStore(s => s.updatePlaneNormal);
   const updatePlanePosition = useStore(s => s.updatePlanePosition);
+  const planePosition = useStore(s => s.tool.planePosition);
   
   const [activeHandleIndex, setActiveHandleIndex] = useState<number | 'plane' | null>(null);
 
@@ -151,17 +152,15 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
         <group>
             {activeTool === 'knife' ? (
                 <PlaneSurface 
-                    // Origin-lock: orientation from the 3 clicks, position always at [0,0,0].
-                    // The translate/rotate widget lets the user refine from there.
-                    center={new THREE.Vector3(0, 0, 0)}
+                    // center = P1 from the store (first click = plane anchor).
+                    // Updated live by TransformControls write-back while user drags.
+                    center={new THREE.Vector3(...planePosition)}
                     quaternion={quaternion} 
                     isActive={isActive && activeHandleIndex === 'plane'}
                     mode={transformMode}
                     planeSize={planeSize}
                     onClick={() => setActiveHandleIndex('plane')}
                     onTransformChange={(pos: THREE.Vector3, quat: THREE.Quaternion) => {
-                        // Write the plane's live position back to the store so executeSlice
-                        // uses the correct origin after the user drags/rotates.
                         updatePlanePosition([pos.x, pos.y, pos.z]);
                         const n = new THREE.Vector3(0, 0, 1).applyQuaternion(quat).normalize();
                         updatePlaneNormal([n.x, n.y, n.z]);
