@@ -398,9 +398,15 @@ export const useStore = create<SliceItStore>()(
             const p1 = new THREE.Vector3(...newPoints[1]);
 
             if (isOrthoView) {
-                // Ortho 2-click: normal = direction of the drawn line (P1 → P2)
-                const dir = new THREE.Vector3().subVectors(p1, p0).normalize();
-                if (dir.lengthSq() > 0.0001) derivedNormal = [dir.x, dir.y, dir.z];
+                // Ortho 2-click: P1→P2 defines an EDGE of the cutting plane.
+                // The plane contains that line and extends in the camera depth
+                // direction. Normal = cross(edge, viewDir).
+                const edge = new THREE.Vector3().subVectors(p1, p0).normalize();
+                const viewDir = new THREE.Vector3(
+                  ...VIEW_CONFIGS[s.activeViewIndex].position
+                ).normalize();
+                const n = new THREE.Vector3().crossVectors(edge, viewDir).normalize();
+                if (n.lengthSq() > 0.0001) derivedNormal = [n.x, n.y, n.z];
             } else {
                 // Perspective 3-click: normal = cross product of two edge vectors
                 const p2 = new THREE.Vector3(...newPoints[2]);

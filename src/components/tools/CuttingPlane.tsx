@@ -76,18 +76,22 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
 
   // ── Final-plane quaternion (cross product of P1→P2 and P1→P3) ─────────────
   // ── Plane quaternion ────────────────────────────────────────────────────────
-  // Ortho 2-point mode: normal = normalize(P2 − P1) — perpendicular to the drawn line
+  // Ortho 2-point mode: P1→P2 is an EDGE. Normal = cross(edge, viewDir).
+  //   The plane contains the drawn line and extends in the camera depth direction.
   // Perspective 3-point mode: normal = cross product of (P1→P2) × (P1→P3)
   const quaternion = useMemo(() => {
     const zAxis = new THREE.Vector3(0, 0, 1);
 
     if (isOrthoView && vectorPoints.length >= 2) {
-      // Direction from P1 to P2 (or cursor in preview) IS the plane normal
-      const dir = new THREE.Vector3()
+      const edge = new THREE.Vector3()
         .subVectors(vectorPoints[vectorPoints.length - 1], vectorPoints[0])
         .normalize();
-      if (dir.lengthSq() > 0.0001) {
-        return new THREE.Quaternion().setFromUnitVectors(zAxis, dir);
+      const viewDir = new THREE.Vector3(
+        ...VIEW_CONFIGS[activeViewIndex].position
+      ).normalize();
+      const normal = new THREE.Vector3().crossVectors(edge, viewDir).normalize();
+      if (normal.lengthSq() > 0.0001) {
+        return new THREE.Quaternion().setFromUnitVectors(zAxis, normal);
       }
       return new THREE.Quaternion();
     }
