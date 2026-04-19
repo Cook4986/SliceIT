@@ -76,58 +76,73 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
 
   // ── Final-plane quaternion (cross product of P1→P2 and P1→P3) ─────────────
   // ── Plane quaternion ────────────────────────────────────────────────────────
-  // Ortho 2-point mode: P1→P2 is an EDGE. Normal = cross(edge, viewDir).
-  //   The plane contains the drawn line and extends in the camera depth direction.
-  // Perspective 3-point mode: normal = cross product of (P1→P2) × (P1→P3)
+  // Unified edge-based orientation for both ortho and ISO viewports:
+  //   local X = edge (P1→P2) — the visible cut line
+  //   local Y = depth — extends from camera toward horizon
+  //   local Z = normal — perpendicular to both
+  //
+  // Ortho (2-click): depth derived from fixed camera direction.
+  // ISO (3-click): depth derived from P3 position. When P3≈P2 (cursor
+  //   hasn't moved yet), falls back to camera direction for the initial preview.
   const quaternion = useMemo(() => {
+    if (vectorPoints.length < 2) return new THREE.Quaternion();
 
-    if (isOrthoView && vectorPoints.length >= 2) {
-      // P1→P2 defines the visible edge of the cutting plane.
-      // Build a full rotation matrix so the plane's local axes map to:
-      //   local X → edge direction (visible edge in viewport)
-      //   local Y → camera depth direction (extends toward "horizon")
-      //   local Z → normal (perpendicular to both = plane normal)
-      const edge = new THREE.Vector3()
-        .subVectors(vectorPoints[vectorPoints.length - 1], vectorPoints[0])
-        .normalize();
+    // Edge = P1→P2 (always the visible edge, regardless of viewport)
+    const p0 = vectorPoints[0];
+    const p1 = vectorPoints[1];
+    const edge = new THREE.Vector3().subVectors(p1, p0).normalize();
+    if (edge.lengthSq() < 1e-8) return new THREE.Quaternion();
+
+    let normal: THREE.Vector3;
+
+    if (isOrthoView) {
+      // Ortho: camera direction is fixed from config
       const viewDir = new THREE.Vector3(
         ...VIEW_CONFIGS[activeViewIndex].position
       ).normalize();
-      const normal = new THREE.Vector3().crossVectors(edge, viewDir).normalize();
-      if (normal.lengthSq() < 0.0001) return new THREE.Quaternion();
-      // Re-derive viewDir to ensure perfect orthogonality
-      const depth = new THREE.Vector3().crossVectors(normal, edge).normalize();
-      const m = new THREE.Matrix4().makeBasis(edge, depth, normal);
-      return new THREE.Quaternion().setFromRotationMatrix(m);
+      normal = new THREE.Vector3().crossVectors(edge, viewDir).normalize();
+    } else {
+      // ISO/Perspective: P3 tilts the plane around the edge axis
+      if (vectorPoints.length >= 3) {
+        const p2 = vectorPoints[2];
+        const v2 = new THREE.Vector3().subVectors(p2, p0).normalize();
+        normal = new THREE.Vector3().crossVectors(edge, v2).normalize();
+
+        // When P3 ≈ P2 (cursor hasn't moved from click 2), the cross product
+        // is degenerate. Fall back to camera-derived normal.
+        if (normal.lengthSq() < 0.0001) {
+          const camDir = new THREE.Vector3(
+            ...VIEW_CONFIGS[activeViewIndex].position
+          ).normalize();
+          normal = new THREE.Vector3().crossVectors(edge, camDir).normalize();
+        }
+      } else {
+        // Only 2 points (shouldn't reach here for ISO, but safe fallback)
+        const camDir = new THREE.Vector3(
+          ...VIEW_CONFIGS[activeViewIndex].position
+        ).normalize();
+        normal = new THREE.Vector3().crossVectors(edge, camDir).normalize();
+      }
     }
 
-    if (vectorPoints.length < 3) return new THREE.Quaternion();
-    const p0 = vectorPoints[0];
-    const p1 = vectorPoints[1];
-    const p2 = vectorPoints[2];
-    if (!p0 || !p1 || !p2) return new THREE.Quaternion();
-    const v1 = new THREE.Vector3().subVectors(p1, p0);
-    const v2 = new THREE.Vector3().subVectors(p2, p0);
-    if (v1.lengthSq() < 1e-8 || v2.lengthSq() < 1e-8) return new THREE.Quaternion();
-    v1.normalize();
-    v2.normalize();
-    const normal = new THREE.Vector3().crossVectors(v1, v2).normalize();
     if (normal.lengthSq() < 0.0001) return new THREE.Quaternion();
-    let up = new THREE.Vector3(0, 1, 0);
-    if (Math.abs(normal.dot(up)) > 0.99) up.set(0, 0, 1);
-    const m = new THREE.Matrix4().lookAt(new THREE.Vector3(0, 0, 0), normal, up);
+
+    // Build orthonormal basis: edge (X), depth (Y), normal (Z)
+    const depth = new THREE.Vector3().crossVectors(normal, edge).normalize();
+    const m = new THREE.Matrix4().makeBasis(edge, depth, normal);
     return new THREE.Quaternion().setFromRotationMatrix(m);
-  }, [vectorPoints, isOrthoView]);
+  }, [vectorPoints, isOrthoView, activeViewIndex]);
 
   // ── Preview computations ───────────────────────────────────────────────────
 
   // Locked-point count (everything except the live cursor follower)
   const lockedCount = isDrawingComplete ? vectorPoints.length : Math.max(0, vectorPoints.length - 1);
 
-  // Preview center = P1 (the anchor point). P2/P3 only affect direction/angle.
+  // Preview center = model's geometric center (same as deployed plane).
+  // Anchors only define orientation; the plane always sits on the model.
   const previewCenter = useMemo(() => {
-    return vectorPoints[0]?.clone() ?? new THREE.Vector3();
-  }, [vectorPoints]);
+    return boundingSphere?.center?.clone() ?? new THREE.Vector3();
+  }, [boundingSphere]);
 
   // Preview size = always bounding-sphere based to fully frame the mesh.
   // Knife planes extend through the entire model — no user-controlled sizing.
@@ -243,6 +258,15 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
             lineWidth={1.5}
             transparent opacity={isDegenerate ? 0.8 : 0.35}
             dashed dashSize={0.12} gapSize={0.08}
+          />
+          {/* Bold edge line — the P1→P2 edge (local X at y=0) */}
+          <Line
+            points={[
+              new THREE.Vector3(-previewSize/2, 0, 0).applyQuaternion(previewQuaternion).add(previewCenter),
+              new THREE.Vector3( previewSize/2, 0, 0).applyQuaternion(previewQuaternion).add(previewCenter),
+            ]}
+            color={COLORS.accent.cyan} lineWidth={4} transparent opacity={0.9}
+            depthWrite={false}
           />
           {/* Degenerate warning */}
           {isDegenerate && (
