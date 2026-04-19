@@ -32,13 +32,14 @@ export function CuttingTool({ isActive }: { isActive: boolean }) {
     return () => window.removeEventListener('keydown', handleKey);
   }, [setTransformMode]);
 
+  // Sync group transform from store → ensures all viewports match
   useEffect(() => {
     if (groupRef.current) {
       groupRef.current.position.set(...toolTransform.position);
       groupRef.current.rotation.set(...toolTransform.rotation);
       groupRef.current.scale.set(...toolTransform.scale);
     }
-  }, [activeTool]); 
+  }, [toolTransform]);
 
   if (!activeTool || activeTool === 'knife' || activeTool === 'lasso') {
     return null;
