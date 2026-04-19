@@ -23,6 +23,51 @@ async function loadManifold(): Promise<any> {
   return manifoldModule;
 }
 
+/**
+ * Strip triangles whose vertices are outside the original model bounds.
+ * The half-space cutter (10000³ cube) can leave slivers/spikes at its
+ * boundaries after boolean subtraction. This clamps the output to the
+ * original model's bounding sphere + a small margin.
+ */
+function clampToOriginalBounds(
+  positions: Float32Array,
+  indices: Uint32Array,
+  modelPositions: Float32Array
+): { positions: Float32Array; indices: Uint32Array } {
+  // Compute bounding sphere of the original model
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(modelPositions, 3));
+  geo.computeBoundingSphere();
+  const center = geo.boundingSphere!.center;
+  const radius = geo.boundingSphere!.radius * 1.5; // 50% margin
+  const r2 = radius * radius;
+  geo.dispose();
+
+  // Filter triangles: keep only those where ALL 3 vertices are inside bounds
+  const numProp = 3;
+  const keptIndices: number[] = [];
+  for (let i = 0; i < indices.length; i += 3) {
+    let keep = true;
+    for (let j = 0; j < 3; j++) {
+      const vi = indices[i + j];
+      const x = positions[vi * numProp] - center.x;
+      const y = positions[vi * numProp + 1] - center.y;
+      const z = positions[vi * numProp + 2] - center.z;
+      if (x * x + y * y + z * z > r2) { keep = false; break; }
+    }
+    if (keep) {
+      keptIndices.push(indices[i], indices[i + 1], indices[i + 2]);
+    }
+  }
+
+  if (keptIndices.length === indices.length) {
+    return { positions, indices }; // Nothing filtered
+  }
+
+  console.log(`[SlicingWorker] Clamped: removed ${(indices.length - keptIndices.length) / 3} artifact triangles`);
+  return { positions, indices: new Uint32Array(keptIndices) };
+}
+
 // ── Worker API ────────────────────────────────────────────────────────────
 const slicingAPI = {
   async init(): Promise<void> {
@@ -105,7 +150,7 @@ const slicingAPI = {
         : new Uint32Array(resultMesh.triVerts);
 
       console.log('[SlicingWorker] Manifold subtraction complete:', resPositions.length / 3, 'verts');
-      return { positions: resPositions, indices: resIndices };
+      return clampToOriginalBounds(resPositions, resIndices, positions);
 
     } catch (manifoldErr: any) {
       console.warn('[SlicingWorker] Manifold failed, falling back to three-csg-ts:', manifoldErr.message);
@@ -138,10 +183,11 @@ const slicingAPI = {
 
     const resultMesh = CSG.subtract(modelMesh, cutterMesh);
     const resGeo = resultMesh.geometry as THREE.BufferGeometry;
-    const resPositions = resGeo.attributes.position.array as Float32Array;
-    const resIndices = resGeo.index ? resGeo.index.array as Uint32Array : new Uint32Array(0);
-
-    return { positions: resPositions, indices: resIndices };
+    const fallbackPositions = new Float32Array(resGeo.attributes.position.array as Float32Array);
+    const fallbackIndices = resGeo.index
+      ? new Uint32Array(resGeo.index.array as Uint32Array)
+      : new Uint32Array(0);
+    return clampToOriginalBounds(fallbackPositions, fallbackIndices, positions);
   },
 
   async subtractMeshWithPrimitive(
