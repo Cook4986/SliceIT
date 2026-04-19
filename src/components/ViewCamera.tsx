@@ -225,6 +225,14 @@ export function ViewCamera({ config, viewIndex }: ViewCameraProps) {
                 MIDDLE: THREE.MOUSE.DOLLY,
                 RIGHT: THREE.MOUSE.PAN
             }}
+            touches={{
+                ONE: THREE.TOUCH.PAN,
+                TWO: THREE.TOUCH.DOLLY_PAN
+            }}
+            minPolarAngle={Math.acos(config.position[1] / Math.hypot(...config.position))}
+            maxPolarAngle={Math.acos(config.position[1] / Math.hypot(...config.position))}
+            minAzimuthAngle={Math.atan2(config.position[0], config.position[2])}
+            maxAzimuthAngle={Math.atan2(config.position[0], config.position[2])}
           />
         </group>
       ) : (
