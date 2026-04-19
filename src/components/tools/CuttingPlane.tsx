@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect, useMemo } from 'react';
 import * as THREE from 'three';
-import { TransformControls, Sphere, Line, Html } from '@react-three/drei';
+import { TransformControls, Sphere, Line } from '@react-three/drei';
 import { useStore } from '../../store/useStore';
 import { MATERIALS, COLORS } from '../../config/theme';
 import { useThree } from '@react-three/fiber';
@@ -268,31 +268,7 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
             color={COLORS.accent.cyan} lineWidth={4} transparent opacity={0.9}
             depthWrite={false}
           />
-          {/* Degenerate warning */}
-          {isDegenerate && (
-            <Html position={previewCenter} center distanceFactor={10} style={{ pointerEvents: 'none' }}>
-              <div style={{
-                background: 'rgba(80,10,10,0.9)', border: '1.5px solid #ff4444',
-                borderRadius: '10px', padding: '4px 12px', color: '#ff8888',
-                fontSize: '10px', fontWeight: 700, fontFamily: 'monospace', whiteSpace: 'nowrap',
-                marginTop: '-52px',
-              }}>
-                ⚠ POINTS TOO CLOSE — SPREAD ANCHORS
-              </div>
-            </Html>
-          )}
-          {!isDegenerate && (
-            <Html position={previewCenter} center distanceFactor={10} style={{ pointerEvents: 'none' }}>
-              <div style={{
-                background: 'rgba(15,10,40,0.8)', border: '1px solid #F472B6',
-                borderRadius: '10px', padding: '3px 10px', color: '#F472B6',
-                fontSize: '10px', fontWeight: 700, fontFamily: 'monospace', whiteSpace: 'nowrap',
-                marginTop: '-52px',
-              }}>
-                CLICK TO SET ANGLE
-              </div>
-            </Html>
-          )}
+
         </group>
       )}
 
