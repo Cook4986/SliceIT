@@ -382,9 +382,25 @@ export const useStore = create<SliceItStore>()(
             // Perspective 3-click: cross product of two edge vectors defines the normal
             isDrawingComplete = true;
             newPlacementIndex = -1;
-        } else if (activeTool === 'lasso' && lockedCount > 8) {
-            isDrawingComplete = true;
-            newPlacementIndex = -1;
+        } else if (activeTool === 'lasso' && lockedCount >= 3) {
+            // Lasso closes when user clicks near the first anchor point (loop closure)
+            const firstPt = new THREE.Vector3(...newPoints[0]);
+            const clickPt = new THREE.Vector3(...pos);
+            const closeDist = s.model.boundingSphere?.radius
+              ? s.model.boundingSphere.radius * 0.08  // 8% of model radius
+              : 0.15;
+            if (firstPt.distanceTo(clickPt) < closeDist) {
+                // Remove the duplicated close point — polygon is implicitly closed
+                newPoints.splice(placementIndex, 1);
+                isDrawingComplete = true;
+                newPlacementIndex = -1;
+            } else if (lockedCount > 9) {
+                // Hard cap: auto-close after 9 points
+                isDrawingComplete = true;
+                newPlacementIndex = -1;
+            } else {
+                newPoints.push([...pos] as [number, number, number]);
+            }
         } else {
             // Add a new follower point at the next index (starts at click pos, will be updated by mouse)
             newPoints.push([...pos] as [number, number, number]);
@@ -540,6 +556,26 @@ export const useStore = create<SliceItStore>()(
                   tool.transform.position,
                   tool.transform.rotation,
                   tool.transform.scale
+              );
+          } else if (tool.activeTool === 'lasso') {
+              // Lasso: extrude polygon along camera depth direction
+              const polyFlat = new Float32Array(tool.points.flat());
+              const viewConfig = VIEW_CONFIGS[get().activeViewIndex];
+              const camPos = viewConfig?.position ?? [5, 5, 5];
+              const camLen = Math.sqrt(camPos[0]**2 + camPos[1]**2 + camPos[2]**2);
+              const extrusionDir: [number, number, number] = [
+                camPos[0] / camLen,
+                camPos[1] / camLen,
+                camPos[2] / camLen,
+              ];
+              // Extrusion depth = 3x model diameter to fully punch through
+              const extrusionDepth = (model.boundingSphere?.radius ?? 5) * 6;
+              result = await api.subtractMeshWithLasso(
+                  posCopy,
+                  idxCopy,
+                  polyFlat,
+                  extrusionDir,
+                  extrusionDepth
               );
           } else {
               result = await api.subtractMeshWithPlane(

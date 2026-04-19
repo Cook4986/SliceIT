@@ -92,7 +92,7 @@ export function StatusBar() {
             {activeTool.toUpperCase()} MODE
             {(activeTool === 'knife' || activeTool === 'lasso') && (
               <span style={{ color: 'var(--color-accent-cyan)', marginLeft: 8 }}>
-              {isDrawingComplete ? '✓ READY TO SLICE' : `${pointCount}/${activeTool === 'knife' ? (VIEW_CONFIGS[activeViewIndex]?.cameraType === 'orthographic' ? 2 : 3) : '3+'} pts`}
+              {isDrawingComplete ? '✓ READY TO SLICE' : activeTool === 'lasso' ? `${pointCount} pts — click ⊙ to close` : `${pointCount}/${VIEW_CONFIGS[activeViewIndex]?.cameraType === 'orthographic' ? 2 : 3} pts`}
               </span>
             )}
           </span>

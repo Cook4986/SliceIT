@@ -279,6 +279,136 @@ const slicingAPI = {
     return { positions: resPositions, indices: resIndices };
   },
 
+  /**
+   * Lasso tool: extrude a polygon along extrusion direction and subtract from mesh.
+   * polyPoints: flat array of 3D polygon vertices [x0,y0,z0, x1,y1,z1, ...]
+   * extrusionDir: unit direction to extrude (camera depth direction)
+   * extrusionDepth: how far to extrude (should be ≥ model diameter)
+   */
+  async subtractMeshWithLasso(
+    modelPositions: Float32Array,
+    modelIndices: Uint32Array | null,
+    polyPoints: Float32Array,
+    extrusionDir: [number, number, number],
+    extrusionDepth: number
+  ): Promise<{ positions: Float32Array; indices: Uint32Array }> {
+    let positions = modelPositions;
+    let indices = modelIndices;
+
+    // Merge vertices for non-indexed geometry
+    if (!indices || indices.length === 0) {
+      const tempGeo = new THREE.BufferGeometry();
+      tempGeo.setAttribute('position', new THREE.BufferAttribute(modelPositions, 3));
+      const indexed = mergeVertices(tempGeo, 1e-4);
+      indexed.computeVertexNormals();
+      positions = indexed.attributes.position.array as Float32Array;
+      indices = indexed.index!.array as Uint32Array;
+    }
+
+    // Build extruded prism geometry from polygon
+    // Convert poly points to THREE.Vector3 array
+    const numVerts = polyPoints.length / 3;
+    const polyVerts: THREE.Vector3[] = [];
+    for (let i = 0; i < numVerts; i++) {
+      polyVerts.push(new THREE.Vector3(polyPoints[i*3], polyPoints[i*3+1], polyPoints[i*3+2]));
+    }
+
+    // Build a local coordinate system for the polygon:
+    // Z axis = extrusion direction, X/Y axes = polygon plane
+    const extDir = new THREE.Vector3(...extrusionDir).normalize();
+    let up = new THREE.Vector3(0, 1, 0);
+    if (Math.abs(extDir.dot(up)) > 0.99) up.set(1, 0, 0);
+    const localX = new THREE.Vector3().crossVectors(up, extDir).normalize();
+    const localY = new THREE.Vector3().crossVectors(extDir, localX).normalize();
+
+    // Project polygon vertices into 2D (local X/Y plane)
+    const polyCenter = new THREE.Vector3();
+    polyVerts.forEach(v => polyCenter.add(v));
+    polyCenter.divideScalar(numVerts);
+
+    // Build a Shape from 2D projections for THREE.js ExtrudeGeometry
+    const pts2D: THREE.Vector2[] = polyVerts.map(v => {
+      const rel = new THREE.Vector3().subVectors(v, polyCenter);
+      return new THREE.Vector2(rel.dot(localX), rel.dot(localY));
+    });
+
+    const shape = new THREE.Shape(pts2D);
+
+    // Create extruded geometry
+    const extrudeSettings = {
+      depth: extrusionDepth,
+      bevelEnabled: false,
+    };
+    const extGeo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+
+    // Transform the extruded geometry back to world space
+    // Build rotation matrix from local basis
+    const rotMatrix = new THREE.Matrix4().makeBasis(localX, localY, extDir);
+    // Translate: center the extrusion so it straddles the polygon plane
+    const offsetCenter = polyCenter.clone().add(extDir.clone().multiplyScalar(-extrusionDepth / 2));
+    const fullMatrix = new THREE.Matrix4()
+      .makeTranslation(offsetCenter.x, offsetCenter.y, offsetCenter.z)
+      .multiply(rotMatrix);
+    extGeo.applyMatrix4(fullMatrix);
+
+    // Merge vertices on the extruded geo for clean boolean ops
+    const mergedExtGeo = mergeVertices(extGeo, 1e-4);
+    mergedExtGeo.computeVertexNormals();
+
+    try {
+      const wasm = await loadManifold();
+      const { Manifold } = wasm;
+
+      const meshGL = {
+        numProp: 3,
+        vertProperties: positions instanceof Float32Array ? positions : new Float32Array(positions),
+        triVerts: indices instanceof Uint32Array ? indices : new Uint32Array(indices),
+      };
+      const modelManifold = new Manifold(meshGL);
+
+      const cutterGL = {
+        numProp: 3,
+        vertProperties: new Float32Array(mergedExtGeo.attributes.position.array as Float32Array),
+        triVerts: new Uint32Array(mergedExtGeo.index!.array as Uint32Array),
+      };
+      const cutterManifold = new Manifold(cutterGL);
+
+      const result = modelManifold.subtract(cutterManifold);
+      if (result.isEmpty()) throw new Error('Manifold returned empty mesh');
+
+      const resultMesh = result.getMesh();
+      const resPositions = resultMesh.vertProperties instanceof Float32Array
+        ? resultMesh.vertProperties : new Float32Array(resultMesh.vertProperties);
+      const resIndices = resultMesh.triVerts instanceof Uint32Array
+        ? resultMesh.triVerts : new Uint32Array(resultMesh.triVerts);
+
+      console.log('[SlicingWorker] Manifold lasso subtraction complete:', resPositions.length / 3, 'verts');
+      return clampToOriginalBounds(resPositions, resIndices, modelPositions);
+
+    } catch (manifoldErr: any) {
+      console.warn('[SlicingWorker] Manifold lasso failed, falling back to three-csg-ts:', manifoldErr.message);
+    }
+
+    // Fallback: three-csg-ts
+    const modelGeo = new THREE.BufferGeometry();
+    modelGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    if (indices && indices.length > 0) modelGeo.setIndex(new THREE.BufferAttribute(indices, 1));
+    modelGeo.computeVertexNormals();
+    const modelMesh = new THREE.Mesh(modelGeo, new THREE.MeshBasicMaterial());
+    modelMesh.updateMatrixWorld();
+
+    const cutterMesh = new THREE.Mesh(mergedExtGeo, new THREE.MeshBasicMaterial());
+    cutterMesh.updateMatrixWorld();
+
+    const resultMesh = CSG.subtract(modelMesh, cutterMesh);
+    const resGeo = resultMesh.geometry as THREE.BufferGeometry;
+    const fallbackPositions = new Float32Array(resGeo.attributes.position.array as Float32Array);
+    const fallbackIndices = resGeo.index
+      ? new Uint32Array(resGeo.index.array as Uint32Array)
+      : new Uint32Array(0);
+    return clampToOriginalBounds(fallbackPositions, fallbackIndices, modelPositions);
+  },
+
   async filterPointCloud(
     _points: Float32Array,
     _toolType: string,

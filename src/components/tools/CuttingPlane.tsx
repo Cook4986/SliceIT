@@ -367,6 +367,19 @@ function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick, 
 function LassoSurface({ points, isActive, mode, onClick, onTransformChange }: any) {
   const meshRef = useRef<THREE.Mesh>(null);
   const { invalidate } = useThree();
+  const activeViewIndex = useStore(s => s.activeViewIndex);
+  const boundingSphere = useStore(s => s.model.boundingSphere);
+
+  // Extrusion direction = camera depth (toward the scene from the camera)
+  const extrusionDir = useMemo(() => {
+    const camPos = VIEW_CONFIGS[activeViewIndex]?.position ?? [5, 5, 5];
+    return new THREE.Vector3(...camPos).normalize();
+  }, [activeViewIndex]);
+
+  // Extrusion depth = 3x model diameter
+  const extrusionDepth = useMemo(() => {
+    return (boundingSphere?.radius ?? 5) * 6;
+  }, [boundingSphere]);
 
   const center = useMemo(() => {
     if (!points || points.length === 0) return new THREE.Vector3();
@@ -375,7 +388,8 @@ function LassoSurface({ points, isActive, mode, onClick, onTransformChange }: an
     return c.multiplyScalar(1 / points.length);
   }, [points]);
 
-  const geometry = useMemo(() => {
+  // Front face geometry (flat polygon)
+  const faceGeometry = useMemo(() => {
     if (!points || points.length < 3) return new THREE.BufferGeometry();
     const geom = new THREE.BufferGeometry();
     const positions: number[] = [];
@@ -391,7 +405,27 @@ function LassoSurface({ points, isActive, mode, onClick, onTransformChange }: an
     return geom;
   }, [points, center]);
 
-  useEffect(() => { return () => geometry.dispose(); }, [geometry]);
+  // Polygon outline (thick edges) — front face, closed loop
+  const frontEdge = useMemo(() => {
+    if (!points || points.length < 3) return [];
+    return [...points, points[0]];
+  }, [points]);
+
+  // Back face outline (shifted by extrusion)
+  const backEdge = useMemo(() => {
+    if (!points || points.length < 3) return [];
+    const offset = extrusionDir.clone().multiplyScalar(-extrusionDepth);
+    return [...points.map((p: THREE.Vector3) => p.clone().add(offset)), points[0].clone().add(offset)];
+  }, [points, extrusionDir, extrusionDepth]);
+
+  // Side connecting lines (one per vertex)
+  const sideLines = useMemo(() => {
+    if (!points || points.length < 3) return [];
+    const offset = extrusionDir.clone().multiplyScalar(-extrusionDepth);
+    return points.map((p: THREE.Vector3) => [p, p.clone().add(offset)]);
+  }, [points, extrusionDir, extrusionDepth]);
+
+  useEffect(() => { return () => faceGeometry.dispose(); }, [faceGeometry]);
 
   const handleChange = () => {
     if (meshRef.current && onTransformChange) {
@@ -404,17 +438,50 @@ function LassoSurface({ points, isActive, mode, onClick, onTransformChange }: an
 
   return (
     <group>
-      <mesh ref={meshRef} geometry={geometry} position={center}
+      {/* Front face fill */}
+      <mesh ref={meshRef} geometry={faceGeometry} position={center}
         onPointerDown={(e) => { e.stopPropagation(); onClick(); }}
       >
         <meshStandardMaterial
-          color={MATERIALS.cutter.color} transparent opacity={0.3}
+          color={MATERIALS.cutter.color} transparent opacity={0.2}
           side={THREE.DoubleSide} depthWrite={false}
         />
       </mesh>
+
+      {/* Front edge — thick cyan outline */}
+      {frontEdge.length > 0 && (
+        <Line
+          points={frontEdge}
+          color={COLORS.accent.cyan} lineWidth={4}
+          transparent opacity={0.9} depthWrite={false}
+        />
+      )}
+
+      {/* Back edge — thinner dashed outline */}
+      {backEdge.length > 0 && (
+        <Line
+          points={backEdge}
+          color={COLORS.accent.pink} lineWidth={1.5}
+          transparent opacity={0.35} depthWrite={false}
+          dashed dashSize={0.1} gapSize={0.06}
+        />
+      )}
+
+      {/* Side connecting edges */}
+      {sideLines.map((pair: THREE.Vector3[], i: number) => (
+        <Line
+          key={`side-${i}`}
+          points={pair}
+          color={COLORS.accent.pink} lineWidth={1}
+          transparent opacity={0.25} depthWrite={false}
+          dashed dashSize={0.1} gapSize={0.06}
+        />
+      ))}
+
       {isActive && meshRef.current && (
         <TransformControls object={meshRef.current} mode={mode} onObjectChange={handleChange} />
       )}
     </group>
   );
 }
+
