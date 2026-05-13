@@ -71,7 +71,7 @@ When a user clicks "Box Cut":
 ### 3.2 Drawing (Knife/Lasso)
 
 - **Lasso Trail**: As the user drags, the line should have a "neon glow" effect (cyan shadow) to make it highly visible against complex models.
-- **Point Snapping**: When using the Knife tool, the cursor should subtly snap to existing vertices on the model mesh (visualized by a small circle).
+- **Point Snapping**: When using the Slice It tool, the cursor should subtly snap to existing vertices on the model mesh (visualized by a small circle).
 
 ### 3.3 The "Slice!" Execution
 

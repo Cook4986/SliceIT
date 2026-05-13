@@ -30,7 +30,7 @@ gantt
     CSG & Point Cloud Engine          :p5, after p4, 6d
 
     section Phase 6
-    Knife & Lasso Tools               :p6, after p5, 5d
+    Knife & Rope It Tools               :p6, after p5, 5d
 
     section Phase 7
     Polish, Testing & Deploy          :p7, after p6, 4d
@@ -243,7 +243,7 @@ npm install -D @types/earcut
 
 ---
 
-## Phase 6: Knife & Lasso Tools (5 days)
+## Phase 6: Knife & Rope It Tools (5 days)
 
 ### Objectives
 - Implement knife (point-to-point) drawing tool
@@ -266,8 +266,8 @@ npm install -D @types/earcut
 | 6.9 | Cancel/reset drawing | `src/components/tools/DrawingCanvas.tsx` | 1h | Escape key, right-click cancel |
 
 ### Acceptance Criteria
-- [ ] Knife tool: click points to create cutting polygon
-- [ ] Lasso tool: drag to draw freeform cutting shape
+- [ ] Slice It tool: click points to create cutting polygon
+- [ ] Rope It tool: drag to draw freeform cutting shape
 - [ ] Both tools restricted to orthographic views in v1
 - [ ] Drawing preview renders in real-time
 - [ ] Completed shapes are extruded into 3D volumes

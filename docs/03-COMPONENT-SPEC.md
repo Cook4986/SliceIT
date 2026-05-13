@@ -292,8 +292,8 @@ Horizontal toolbar in the header.
 | Sphere Cut | ⚪ | `S` | Activates sphere cutter |
 | Cylinder Cut | 🔵 | `C` | Activates cylinder cutter |
 | Plane Cut | ✂️ | `P` | Activates plane cutter |
-| Knife | 🔪 | `K` | Activates knife tool |
-| Lasso | ➰ | `L` | Activates lasso tool |
+| Slice It | 🔪 | `K` | Activates knife tool |
+| Rope It | ➰ | `L` | Activates lasso tool |
 | Translate | ↔️ | `G` | Transform mode: translate |
 | Rotate | 🔄 | `R` | Transform mode: rotate |
 | Scale | ↕️ | `T` | Transform mode: scale |

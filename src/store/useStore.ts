@@ -783,7 +783,9 @@ export const useStore = create<SliceItStore>()(
         set(state => {
             const logs = [...state.logs, `[${timestamp}] ${msg}`];
             // Keep last 100 logs to prevent memory bloat
-            if (logs.length > 100) logs.shift();
+            if (logs.length > 100) {
+                return { logs: logs.slice(-100) };
+            }
             return { logs };
         });
         console.log(`[SliceIT Debug] ${msg}`); // Also output to real console

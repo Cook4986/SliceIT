@@ -170,8 +170,8 @@ All 9 viewports share a **single `<Canvas>`** element. Each viewport is a Drei `
 | **Sphere Cut** | ⚪ | Spherical negative-space primitive | ✅ CSG subtract | ✅ Distance filter |
 | **Cylinder Cut** | 🔵 | Cylindrical negative-space primitive | ✅ CSG subtract | ✅ Radius+height filter |
 | **Plane Cut** | ✂️ | Infinite planar cut | ✅ CSG subtract | ✅ Half-space filter |
-| **Knife** | 🔪 | Point-to-point polyline, extruded | ✅ CSG subtract | ✅ Projected polygon filter |
-| **Lasso** | ➰ | Freeform closed curve, extruded | ✅ CSG subtract | ✅ Projected polygon filter |
+| **Slice It** | 🔪 | Point-to-point polyline, extruded | ✅ CSG subtract | ✅ Projected polygon filter |
+| **Rope It** | ➰ | Freeform closed curve, extruded | ✅ CSG subtract | ✅ Projected polygon filter |
 
 ### 5.2 Tool Interaction Flow
 
@@ -206,7 +206,7 @@ User selects tool → Places/draws in ACTIVE viewport
               Zustand store updated → All 9 views re-render
 ```
 
-### 5.3 Knife Tool (Point-to-Point)
+### 5.3 Slice It Tool (Point-to-Point)
 
 1. User clicks sequential points on the model surface in the active view.
 2. Points are projected onto the view's camera plane.
@@ -215,9 +215,9 @@ User selects tool → Places/draws in ACTIVE viewport
 5. The polygon is extruded along the active view's camera direction (orthographic depth).
 6. The resulting 3D volume is used as the CSG subtraction operand.
 
-> **v1 Constraint**: Knife tool is restricted to **orthographic views only** to avoid projection ambiguity.
+> **v1 Constraint**: Slice It tool is restricted to **orthographic views only** to avoid projection ambiguity.
 
-### 5.4 Lasso Tool
+### 5.4 Rope It Tool
 
 1. User clicks and drags to draw a freeform closed curve.
 2. The curve is sampled into discrete points (e.g., every 3px of mouse movement).
