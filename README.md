@@ -1,5 +1,5 @@
 <div align="right">
-  <a href="https://mncook.net" style="color: #ff00ff; text-shadow: 0 0 5px #ff00ff, 0 0 10px #ff00ff, 0 0 20px #ff00ff; font-family: 'Impact', fantasy; font-size: 1.2rem; text-decoration: none; letter-spacing: 2px;">mncook.net</a>
+  <a href="https://mncook.net" style="color: #ff00ff; text-shadow: 0 0 5px #ff00ff, 0 0 10px #ff00ff, 0 0 20px #ff00ff; font-family: 'Impact', fantasy; font-size: 1.2rem; text-decoration: none; letter-spacing: 2px;">
 </div>
 
 <div align="center">
