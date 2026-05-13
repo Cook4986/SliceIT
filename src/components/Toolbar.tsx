@@ -8,6 +8,8 @@ export function Toolbar() {
   const isSlicing = useStore(s => s.operation.isSlicing);
   const undoCount = useStore(s => s.undoStack.length);
   const redoCount = useStore(s => s.redoStack.length);
+  const preserveTextures = useStore(s => s.ui.preserveTextures);
+  const hasOriginalMaterial = useStore(s => !!s.model.originalMaterial);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -17,6 +19,7 @@ export function Toolbar() {
   const undo = useStore(s => s.undo);
   const redo = useStore(s => s.redo);
   const setUIState = useStore(s => s.setUIState);
+  const togglePreserveTextures = useStore(s => s.togglePreserveTextures);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -100,6 +103,22 @@ export function Toolbar() {
       >
         <span style={{ fontSize: '20px' }}>↪️</span>
       </button>
+
+      <div className="tool-separator" />
+
+      {/* Texture Preservation Toggle */}
+      <button
+        className={`tool-btn texture-toggle ${preserveTextures ? 'texture-on' : ''}`}
+        title={preserveTextures
+          ? 'Texture Preservation ON — UVs carried through cuts (click to disable)'
+          : 'Texture Preservation OFF — geometry-only mode for 3D printing (click to enable)'}
+        onClick={() => togglePreserveTextures()}
+      >
+        <span style={{ fontSize: '18px' }}>{preserveTextures ? '🎨' : '🖤'}</span>
+      </button>
+      {preserveTextures && hasOriginalMaterial && (
+        <span className="texture-indicator">TEX</span>
+      )}
     </div>
   );
 }

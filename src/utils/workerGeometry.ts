@@ -3,6 +3,7 @@ import type { GeometryEntry, ModelType } from '../types/store';
 
 /**
  * Serialize a BufferGeometry into a GeometryEntry for undo/redo storage.
+ * Now preserves UV coordinates when present for texture-mode support.
  */
 export function serializeGeometry(
   geometry: THREE.BufferGeometry,
@@ -15,8 +16,11 @@ export function serializeGeometry(
   const indices = geometry.index
     ? new Uint32Array(geometry.index.array)
     : null;
+  const uvs = geometry.attributes.uv
+    ? new Float32Array(geometry.attributes.uv.array)
+    : null;
 
-  return { kind: 'geometry', positions, indices, normals, type };
+  return { kind: 'geometry', positions, indices, normals, uvs, type };
 }
 
 /**
@@ -34,6 +38,10 @@ export function deserializeGeometry(entry: GeometryEntry): THREE.BufferGeometry 
     geometry.setIndex(new THREE.BufferAttribute(entry.indices, 1));
   }
 
+  if (entry.uvs) {
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(entry.uvs, 2));
+  }
+
   if (!entry.normals) {
     geometry.computeVertexNormals();
   }
@@ -41,4 +49,5 @@ export function deserializeGeometry(entry: GeometryEntry): THREE.BufferGeometry 
   geometry.computeBoundingSphere();
   return geometry;
 }
+
 

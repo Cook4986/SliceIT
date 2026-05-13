@@ -4,12 +4,24 @@
  * Manifold guarantees watertight output regardless of input mesh quality.
  * A vertex-weld pre-pass (mergeVertices) repairs non-indexed / duplicate-vertex
  * geometry before it reaches the boolean engine.
+ *
+ * UV PRESERVATION: When an optional `modelUVs` Float32Array is supplied,
+ * vertex properties are packed as numProp=5 (x,y,z,u,v). Manifold will
+ * automatically interpolate UV coordinates for newly-created vertices at
+ * boolean cut boundaries, preserving texture mapping on cropped output.
  */
 
 import { expose } from 'comlink';
 import * as THREE from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CSG } from 'three-csg-ts';
+
+// ── Result type ────────────────────────────────────────────────────────────
+export interface SliceResult {
+  positions: Float32Array;
+  indices: Uint32Array;
+  uvs: Float32Array | null;
+}
 
 // ── Manifold lazy-loader ───────────────────────────────────────────────────
 let manifoldModule: any = null;
@@ -21,6 +33,67 @@ async function loadManifold(): Promise<any> {
   manifoldModule = await ManifoldFactory();
   manifoldModule.setup(); // Required by manifold-3d v2+
   return manifoldModule;
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * Pack positions (+ optional UVs) into a flat vertProperties array for Manifold.
+ * Returns { numProp, vertProperties } ready to feed into the Manifold constructor.
+ */
+function packVertProperties(
+  positions: Float32Array,
+  uvs: Float32Array | null
+): { numProp: number; vertProperties: Float32Array } {
+  const vertCount = positions.length / 3;
+  if (uvs && uvs.length === vertCount * 2) {
+    // numProp=5: x, y, z, u, v
+    const vp = new Float32Array(vertCount * 5);
+    for (let i = 0; i < vertCount; i++) {
+      vp[i * 5 + 0] = positions[i * 3 + 0];
+      vp[i * 5 + 1] = positions[i * 3 + 1];
+      vp[i * 5 + 2] = positions[i * 3 + 2];
+      vp[i * 5 + 3] = uvs[i * 2 + 0];
+      vp[i * 5 + 4] = uvs[i * 2 + 1];
+    }
+    return { numProp: 5, vertProperties: vp };
+  }
+  // numProp=3: positions only (default / texture-less mode)
+  return {
+    numProp: 3,
+    vertProperties: positions instanceof Float32Array ? positions : new Float32Array(positions),
+  };
+}
+
+/**
+ * Unpack Manifold result vertProperties back to separate positions + uvs arrays.
+ */
+function unpackVertProperties(
+  vertProperties: Float32Array,
+  numProp: number
+): { positions: Float32Array; uvs: Float32Array | null } {
+  const vertCount = vertProperties.length / numProp;
+  const positions = new Float32Array(vertCount * 3);
+  let uvs: Float32Array | null = null;
+
+  if (numProp >= 5) {
+    uvs = new Float32Array(vertCount * 2);
+    for (let i = 0; i < vertCount; i++) {
+      positions[i * 3 + 0] = vertProperties[i * numProp + 0];
+      positions[i * 3 + 1] = vertProperties[i * numProp + 1];
+      positions[i * 3 + 2] = vertProperties[i * numProp + 2];
+      uvs[i * 2 + 0] = vertProperties[i * numProp + 3];
+      uvs[i * 2 + 1] = vertProperties[i * numProp + 4];
+    }
+  } else {
+    for (let i = 0; i < vertCount; i++) {
+      positions[i * 3 + 0] = vertProperties[i * numProp + 0];
+      positions[i * 3 + 1] = vertProperties[i * numProp + 1];
+      positions[i * 3 + 2] = vertProperties[i * numProp + 2];
+    }
+  }
+
+  return { positions, uvs };
 }
 
 /**
@@ -44,15 +117,15 @@ function clampToOriginalBounds(
   geo.dispose();
 
   // Filter triangles: keep only those where ALL 3 vertices are inside bounds
-  const numProp = 3;
+  // Positions are always stride-3 after unpacking
   const keptIndices: number[] = [];
   for (let i = 0; i < indices.length; i += 3) {
     let keep = true;
     for (let j = 0; j < 3; j++) {
       const vi = indices[i + j];
-      const x = positions[vi * numProp] - center.x;
-      const y = positions[vi * numProp + 1] - center.y;
-      const z = positions[vi * numProp + 2] - center.z;
+      const x = positions[vi * 3] - center.x;
+      const y = positions[vi * 3 + 1] - center.y;
+      const z = positions[vi * 3 + 2] - center.z;
       if (x * x + y * y + z * z > r2) { keep = false; break; }
     }
     if (keep) {
@@ -68,6 +141,40 @@ function clampToOriginalBounds(
   return { positions, indices: new Uint32Array(keptIndices) };
 }
 
+/**
+ * Ensure geometry is indexed. Non-indexed formats (STL, many OBJ exports)
+ * need vertex-welding so Manifold can reason about connectivity.
+ * Also carries UVs through the merge when available.
+ */
+function ensureIndexed(
+  positions: Float32Array,
+  indices: Uint32Array | null,
+  uvs: Float32Array | null
+): { positions: Float32Array; indices: Uint32Array; uvs: Float32Array | null } {
+  if (indices && indices.length > 0) {
+    return { positions, indices, uvs };
+  }
+
+  const tempGeo = new THREE.BufferGeometry();
+  tempGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  if (uvs) {
+    tempGeo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  }
+  // mergeVertices welds duplicate verts within tolerance → makes geometry manifold-friendly
+  const indexed = mergeVertices(tempGeo, 1e-4);
+  indexed.computeVertexNormals();
+
+  const mergedUVs = indexed.attributes.uv
+    ? indexed.attributes.uv.array as Float32Array
+    : null;
+
+  return {
+    positions: indexed.attributes.position.array as Float32Array,
+    indices: indexed.index!.array as Uint32Array,
+    uvs: mergedUVs,
+  };
+}
+
 // ── Worker API ────────────────────────────────────────────────────────────
 const slicingAPI = {
   async init(): Promise<void> {
@@ -79,24 +186,13 @@ const slicingAPI = {
     modelPositions: Float32Array,
     modelIndices: Uint32Array | null,
     origin: [number, number, number],
-    normal: [number, number, number]
-  ): Promise<{ positions: Float32Array; indices: Uint32Array }> {
+    normal: [number, number, number],
+    modelUVs?: Float32Array | null
+  ): Promise<SliceResult> {
 
     // ── Step 1: Ensure indexed geometry ────────────────────────────────
-    // Non-indexed formats (STL, many OBJ exports) need vertex-welding so
-    // Manifold can reason about connectivity.
-    let positions = modelPositions;
-    let indices = modelIndices;
-
-    if (!indices || indices.length === 0) {
-      const tempGeo = new THREE.BufferGeometry();
-      tempGeo.setAttribute('position', new THREE.BufferAttribute(modelPositions, 3));
-      // mergeVertices welds duplicate verts within tolerance → makes geometry manifold-friendly
-      const indexed = mergeVertices(tempGeo, 1e-4);
-      indexed.computeVertexNormals();
-      positions = indexed.attributes.position.array as Float32Array;
-      indices = indexed.index!.array as Uint32Array;
-    }
+    const prepared = ensureIndexed(modelPositions, modelIndices, modelUVs ?? null);
+    let { positions, indices, uvs } = prepared;
 
     // ── Step 2: Manifold CSG ────────────────────────────────────────────
     try {
@@ -105,9 +201,10 @@ const slicingAPI = {
 
       // Build Manifold mesh from input geometry.
       // Manifold automatically repairs winding order during construction.
+      const packed = packVertProperties(positions, uvs);
       const meshGL = {
-        numProp: 3,
-        vertProperties: positions instanceof Float32Array ? positions : new Float32Array(positions),
+        numProp: packed.numProp,
+        vertProperties: packed.vertProperties,
         triVerts: indices instanceof Uint32Array ? indices : new Uint32Array(indices),
       };
       const modelManifold = new Manifold(meshGL);
@@ -140,23 +237,29 @@ const slicingAPI = {
       }
 
       const resultMesh = result.getMesh();
-
-      // vertProperties may contain only position data (numProp=3)
-      const resPositions = resultMesh.vertProperties instanceof Float32Array
+      const rawVP = resultMesh.vertProperties instanceof Float32Array
         ? resultMesh.vertProperties
         : new Float32Array(resultMesh.vertProperties);
       const resIndices = resultMesh.triVerts instanceof Uint32Array
         ? resultMesh.triVerts
         : new Uint32Array(resultMesh.triVerts);
 
-      console.log('[SlicingWorker] Manifold subtraction complete:', resPositions.length / 3, 'verts');
-      return clampToOriginalBounds(resPositions, resIndices, positions);
+      // Unpack positions + UVs from the interleaved vertProperties
+      const unpacked = unpackVertProperties(rawVP, packed.numProp);
+      const clamped = clampToOriginalBounds(unpacked.positions, resIndices, positions);
+
+      console.log('[SlicingWorker] Manifold subtraction complete:', clamped.positions.length / 3, 'verts',
+        unpacked.uvs ? '(UVs preserved)' : '(no UVs)');
+      return { positions: clamped.positions, indices: clamped.indices, uvs: unpacked.uvs };
 
     } catch (manifoldErr: any) {
       console.warn('[SlicingWorker] Manifold failed, falling back to three-csg-ts:', manifoldErr.message);
     }
 
-    // ── Step 3: three-csg-ts fallback ──────────────────────────────────
+    // ── Step 3: three-csg-ts fallback (no UV support) ──────────────────
+    if (uvs) {
+      console.warn('[SlicingWorker] three-csg-ts fallback does not preserve UVs — textures will be lost on this cut.');
+    }
     const modelGeo = new THREE.BufferGeometry();
     modelGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     if (indices && indices.length > 0) {
@@ -187,7 +290,8 @@ const slicingAPI = {
     const fallbackIndices = resGeo.index
       ? new Uint32Array(resGeo.index.array as Uint32Array)
       : new Uint32Array(0);
-    return clampToOriginalBounds(fallbackPositions, fallbackIndices, positions);
+    const clamped = clampToOriginalBounds(fallbackPositions, fallbackIndices, positions);
+    return { positions: clamped.positions, indices: clamped.indices, uvs: null };
   },
 
   async subtractMeshWithPrimitive(
@@ -196,27 +300,20 @@ const slicingAPI = {
     primitiveType: 'box' | 'sphere',
     position: [number, number, number],
     rotation: [number, number, number],
-    scale: [number, number, number]
-  ): Promise<{ positions: Float32Array; indices: Uint32Array }> {
-    let positions = modelPositions;
-    let indices = modelIndices;
-
-    if (!indices || indices.length === 0) {
-      const tempGeo = new THREE.BufferGeometry();
-      tempGeo.setAttribute('position', new THREE.BufferAttribute(modelPositions, 3));
-      const indexed = mergeVertices(tempGeo, 1e-4);
-      indexed.computeVertexNormals();
-      positions = indexed.attributes.position.array as Float32Array;
-      indices = indexed.index!.array as Uint32Array;
-    }
+    scale: [number, number, number],
+    modelUVs?: Float32Array | null
+  ): Promise<SliceResult> {
+    const prepared = ensureIndexed(modelPositions, modelIndices, modelUVs ?? null);
+    let { positions, indices, uvs } = prepared;
 
     try {
       const wasm = await loadManifold();
       const { Manifold } = wasm;
 
+      const packed = packVertProperties(positions, uvs);
       const meshGL = {
-        numProp: 3,
-        vertProperties: positions instanceof Float32Array ? positions : new Float32Array(positions),
+        numProp: packed.numProp,
+        vertProperties: packed.vertProperties,
         triVerts: indices instanceof Uint32Array ? indices : new Uint32Array(indices),
       };
       const modelManifold = new Manifold(meshGL);
@@ -244,19 +341,25 @@ const slicingAPI = {
       if (result.isEmpty()) throw new Error('Manifold returned empty mesh — falling back to CSG');
 
       const resultMesh = result.getMesh();
-      const resPositions = resultMesh.vertProperties instanceof Float32Array
+      const rawVP = resultMesh.vertProperties instanceof Float32Array
         ? resultMesh.vertProperties : new Float32Array(resultMesh.vertProperties);
       const resIndices = resultMesh.triVerts instanceof Uint32Array
         ? resultMesh.triVerts : new Uint32Array(resultMesh.triVerts);
 
-      console.log(`[SlicingWorker] Manifold ${primitiveType} subtraction complete:`, resPositions.length / 3, 'verts');
-      return { positions: resPositions, indices: resIndices };
+      const unpacked = unpackVertProperties(rawVP, packed.numProp);
+
+      console.log(`[SlicingWorker] Manifold ${primitiveType} subtraction complete:`, unpacked.positions.length / 3, 'verts',
+        unpacked.uvs ? '(UVs preserved)' : '(no UVs)');
+      return { positions: unpacked.positions, indices: resIndices, uvs: unpacked.uvs };
 
     } catch (manifoldErr: any) {
       console.warn(`[SlicingWorker] Manifold ${primitiveType} failed, falling back to three-csg-ts:`, manifoldErr.message);
     }
 
-    // Fallback
+    // Fallback (no UV support)
+    if (uvs) {
+      console.warn('[SlicingWorker] three-csg-ts fallback does not preserve UVs.');
+    }
     const modelGeo = new THREE.BufferGeometry();
     modelGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     if (indices && indices.length > 0) modelGeo.setIndex(new THREE.BufferAttribute(indices, 1));
@@ -276,7 +379,7 @@ const slicingAPI = {
     const resPositions = resGeo.attributes.position.array as Float32Array;
     const resIndices = resGeo.index ? resGeo.index.array as Uint32Array : new Uint32Array(0);
 
-    return { positions: resPositions, indices: resIndices };
+    return { positions: resPositions, indices: resIndices, uvs: null };
   },
 
   /**
@@ -290,20 +393,11 @@ const slicingAPI = {
     modelIndices: Uint32Array | null,
     polyPoints: Float32Array,
     extrusionDir: [number, number, number],
-    extrusionDepth: number
-  ): Promise<{ positions: Float32Array; indices: Uint32Array }> {
-    let positions = modelPositions;
-    let indices = modelIndices;
-
-    // Merge vertices for non-indexed geometry
-    if (!indices || indices.length === 0) {
-      const tempGeo = new THREE.BufferGeometry();
-      tempGeo.setAttribute('position', new THREE.BufferAttribute(modelPositions, 3));
-      const indexed = mergeVertices(tempGeo, 1e-4);
-      indexed.computeVertexNormals();
-      positions = indexed.attributes.position.array as Float32Array;
-      indices = indexed.index!.array as Uint32Array;
-    }
+    extrusionDepth: number,
+    modelUVs?: Float32Array | null
+  ): Promise<SliceResult> {
+    const prepared = ensureIndexed(modelPositions, modelIndices, modelUVs ?? null);
+    let { positions, indices, uvs } = prepared;
 
     // Build extruded prism geometry from polygon
     // Convert poly points to THREE.Vector3 array
@@ -359,9 +453,10 @@ const slicingAPI = {
       const wasm = await loadManifold();
       const { Manifold } = wasm;
 
+      const packed = packVertProperties(positions, uvs);
       const meshGL = {
-        numProp: 3,
-        vertProperties: positions instanceof Float32Array ? positions : new Float32Array(positions),
+        numProp: packed.numProp,
+        vertProperties: packed.vertProperties,
         triVerts: indices instanceof Uint32Array ? indices : new Uint32Array(indices),
       };
       const modelManifold = new Manifold(meshGL);
@@ -377,19 +472,26 @@ const slicingAPI = {
       if (result.isEmpty()) throw new Error('Manifold returned empty mesh');
 
       const resultMesh = result.getMesh();
-      const resPositions = resultMesh.vertProperties instanceof Float32Array
+      const rawVP = resultMesh.vertProperties instanceof Float32Array
         ? resultMesh.vertProperties : new Float32Array(resultMesh.vertProperties);
       const resIndices = resultMesh.triVerts instanceof Uint32Array
         ? resultMesh.triVerts : new Uint32Array(resultMesh.triVerts);
 
-      console.log('[SlicingWorker] Manifold lasso subtraction complete:', resPositions.length / 3, 'verts');
-      return clampToOriginalBounds(resPositions, resIndices, modelPositions);
+      const unpacked = unpackVertProperties(rawVP, packed.numProp);
+      const clamped = clampToOriginalBounds(unpacked.positions, resIndices, modelPositions);
+
+      console.log('[SlicingWorker] Manifold lasso subtraction complete:', clamped.positions.length / 3, 'verts',
+        unpacked.uvs ? '(UVs preserved)' : '(no UVs)');
+      return { positions: clamped.positions, indices: clamped.indices, uvs: unpacked.uvs };
 
     } catch (manifoldErr: any) {
       console.warn('[SlicingWorker] Manifold lasso failed, falling back to three-csg-ts:', manifoldErr.message);
     }
 
-    // Fallback: three-csg-ts
+    // Fallback: three-csg-ts (no UV support)
+    if (uvs) {
+      console.warn('[SlicingWorker] three-csg-ts fallback does not preserve UVs.');
+    }
     const modelGeo = new THREE.BufferGeometry();
     modelGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     if (indices && indices.length > 0) modelGeo.setIndex(new THREE.BufferAttribute(indices, 1));
@@ -406,7 +508,8 @@ const slicingAPI = {
     const fallbackIndices = resGeo.index
       ? new Uint32Array(resGeo.index.array as Uint32Array)
       : new Uint32Array(0);
-    return clampToOriginalBounds(fallbackPositions, fallbackIndices, modelPositions);
+    const clamped = clampToOriginalBounds(fallbackPositions, fallbackIndices, modelPositions);
+    return { positions: clamped.positions, indices: clamped.indices, uvs: null };
   },
 
   async filterPointCloud(

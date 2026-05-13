@@ -42,6 +42,7 @@ export const useStore = create<SliceItStore>()(
       vertexCount: 0,
       faceCount: 0,
       scaleRatio: 1,
+      originalMaterial: null,
     },
 
     tool: {
@@ -80,6 +81,7 @@ export const useStore = create<SliceItStore>()(
       showFloatingInspector: false,
       floatingInspectorPos: [0, 0],
       showDebugConsole: false, // For hotkey overlay
+      preserveTextures: false, // Off by default — 3D print workflow
     },
 
     setActiveViewIndex: (index: number, remote = false) => {
@@ -138,7 +140,8 @@ export const useStore = create<SliceItStore>()(
           operation: { ...state.operation, isSlicing: true, statusText: 'Loading...' },
         }));
 
-        const geometry = await loadModelFile(file);
+        const loadResult = await loadModelFile(file);
+        const { geometry, material: loadedMaterial } = loadResult;
         const type = detectModelType(geometry);
 
         const prevGeometry = get().model.geometry;
@@ -148,6 +151,9 @@ export const useStore = create<SliceItStore>()(
         normalizeScale(geometry, 2);
         geometry.computeVertexNormals();
         geometry.computeBoundingSphere();
+
+        // Check if the loaded model has textures/materials
+        const hasTextures = !!(loadedMaterial && geometry.attributes.uv);
 
         set({
           model: {
@@ -159,6 +165,7 @@ export const useStore = create<SliceItStore>()(
             vertexCount: geometry.attributes.position.count,
             faceCount: geometry.index ? geometry.index.count / 3 : 0,
             scaleRatio: 1,
+            originalMaterial: loadedMaterial,
           },
           tool: {
             activeTool: null,
@@ -179,6 +186,9 @@ export const useStore = create<SliceItStore>()(
         });
 
         get().addToast('success', `Loaded ${file.name}`);
+        if (hasTextures) {
+          get().addToast('info', '🎨 Textures detected — toggle "Preserve Textures" to keep them on export.');
+        }
       } catch (error: unknown) {
         set({ operation: { isSlicing: false, progress: 0, statusText: '' } });
         get().addToast('error', `Load failed`);
@@ -186,11 +196,21 @@ export const useStore = create<SliceItStore>()(
     },
 
     exportModel: (format: ExportFormat) => {
-      const { geometry, filename } = get().model;
+      const { geometry, filename, originalMaterial } = get().model;
+      const preserveTextures = get().ui.preserveTextures;
       if (!geometry) return;
       try {
-        exportGeometry(geometry, format, filename);
-        get().addToast('success', `Exported as ${format.toUpperCase()}`);
+        exportGeometry(geometry, format, filename, originalMaterial, preserveTextures);
+        if (preserveTextures && originalMaterial) {
+          const isTextureFmt = ['glb', 'gltf', 'obj'].includes(format);
+          if (isTextureFmt) {
+            get().addToast('success', `Exported as ${format.toUpperCase()} with textures`);
+          } else {
+            get().addToast('success', `Exported as ${format.toUpperCase()} (geometry only)`);
+          }
+        } else {
+          get().addToast('success', `Exported as ${format.toUpperCase()}`);
+        }
       } catch (error: unknown) {
         get().addToast('error', `Export failed`);
       }
@@ -216,6 +236,7 @@ export const useStore = create<SliceItStore>()(
           vertexCount: geometry.attributes.position.count,
           faceCount: geometry.index ? geometry.index.count / 3 : 0,
           scaleRatio: 1,
+          originalMaterial: null,
         },
         tool: {
           activeTool: null,
@@ -252,6 +273,7 @@ export const useStore = create<SliceItStore>()(
           vertexCount: 0,
           faceCount: 0,
           scaleRatio: 1,
+          originalMaterial: null,
         },
         undoStack: [],
         redoStack: [],
@@ -548,6 +570,17 @@ export const useStore = create<SliceItStore>()(
             ? new Uint32Array(model.geometry.index.array as Uint32Array)
             : null;
 
+          // Texture preservation: pass UVs to the worker when toggle is on
+          const preserveTextures = get().ui.preserveTextures;
+          const hasUVs = !!(model.geometry.attributes.uv);
+          const uvCopy = (preserveTextures && hasUVs)
+            ? new Float32Array(model.geometry.attributes.uv.array as Float32Array)
+            : null;
+
+          if (preserveTextures && hasUVs) {
+            addLog('Texture preservation mode: passing UVs to CSG worker.');
+          }
+
           if (tool.activeTool === 'box' || tool.activeTool === 'sphere') {
               result = await api.subtractMeshWithPrimitive(
                   posCopy,
@@ -555,7 +588,8 @@ export const useStore = create<SliceItStore>()(
                   tool.activeTool,
                   tool.transform.position,
                   tool.transform.rotation,
-                  tool.transform.scale
+                  tool.transform.scale,
+                  uvCopy
               );
           } else if (tool.activeTool === 'lasso') {
               // Lasso: extrude polygon along camera depth direction
@@ -575,14 +609,16 @@ export const useStore = create<SliceItStore>()(
                   idxCopy,
                   polyFlat,
                   extrusionDir,
-                  extrusionDepth
+                  extrusionDepth,
+                  uvCopy
               );
           } else {
               result = await api.subtractMeshWithPlane(
                   posCopy,
                   idxCopy,
                   origin,
-                  normal
+                  normal,
+                  uvCopy
               );
           }
 
@@ -594,14 +630,22 @@ export const useStore = create<SliceItStore>()(
               slicedGeometry.setIndex(new THREE.BufferAttribute(result.indices, 1));
           }
           slicedGeometry.computeVertexNormals();
-          // Bug 4b fix: add zeroed UV coords so GLTFExporter includes this mesh
-          // in the scene nodes array. Without UVs the exporter silently omits it,
-          // producing a valid-looking but empty GLTF that Blender rejects.
-          const posCount = slicedGeometry.attributes.position.count;
-          slicedGeometry.setAttribute(
-            'uv',
-            new THREE.Float32BufferAttribute(new Float32Array(posCount * 2), 2)
-          );
+
+          // UV handling: use preserved UVs from worker when available,
+          // otherwise add zeroed UVs so GLTFExporter includes the mesh.
+          if (result.uvs && result.uvs.length > 0) {
+            slicedGeometry.setAttribute(
+              'uv',
+              new THREE.Float32BufferAttribute(result.uvs, 2)
+            );
+            addLog('UVs preserved through CSG operation.');
+          } else {
+            const posCount = slicedGeometry.attributes.position.count;
+            slicedGeometry.setAttribute(
+              'uv',
+              new THREE.Float32BufferAttribute(new Float32Array(posCount * 2), 2)
+            );
+          }
           slicedGeometry.computeBoundingSphere();
 
           set(s => ({
@@ -613,6 +657,11 @@ export const useStore = create<SliceItStore>()(
                   faceCount: result.indices.length > 0 ? result.indices.length / 3 : slicedGeometry.attributes.position.count / 3
               }
           }));
+
+          // Warn if UV preservation was requested but CSG fallback stripped them
+          if (preserveTextures && hasUVs && !result.uvs) {
+            get().addToast('warning', '⚠️ Textures lost — CSG fallback does not support UV preservation.');
+          }
 
         } else {
             addLog(`Slicing not yet supported for model type: ${model.type}`);
@@ -774,6 +823,29 @@ export const useStore = create<SliceItStore>()(
 
     setUIState: (uiState) => {
       set(prev => ({ ui: { ...prev.ui, ...uiState } }));
+    },
+
+    togglePreserveTextures: () => {
+      const current = get().ui.preserveTextures;
+      const model = get().model;
+      const newValue = !current;
+
+      if (newValue) {
+        // Turning ON: check if model actually has textures
+        const hasTextures = !!(model.originalMaterial && model.geometry?.attributes.uv);
+        if (!model.geometry) {
+          get().addToast('info', '🎨 Texture mode enabled — load a textured model (GLB/OBJ) to use.');
+        } else if (!hasTextures) {
+          get().addToast('warning', '⚠️ This model has no embedded textures. UVs will be zeroed.');
+        } else {
+          get().addToast('success', '🎨 Texture preservation ON — UVs will be carried through cuts.');
+        }
+      } else {
+        get().addToast('info', 'Texture preservation OFF — geometry-only mode (3D print ready).');
+      }
+
+      set(prev => ({ ui: { ...prev.ui, preserveTextures: newValue } }));
+      get().addLog(`Texture preservation toggled: ${newValue ? 'ON' : 'OFF'}`);
     },
 
     // === Logging Actions ===

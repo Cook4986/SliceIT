@@ -42,6 +42,10 @@ export interface ModelState {
 
   /** Relative scale ratio (applied during normalization) */
   scaleRatio: number;
+
+  /** Original material from the loaded file (textures, colors, PBR maps).
+   *  null for formats that don't carry materials (STL, PLY, XYZ). */
+  originalMaterial: THREE.Material | THREE.Material[] | null;
 }
 
 // ============================================================
@@ -128,6 +132,7 @@ export interface GeometryEntry {
   positions: Float32Array;
   indices: Uint32Array | null;
   normals: Float32Array | null;
+  uvs: Float32Array | null;
   type: ModelType;
 }
 
@@ -164,6 +169,9 @@ export interface UIState {
   showExportModal: boolean;
   showSettings: boolean;
   showDebugConsole: boolean;
+  /** When true, UVs are preserved through the CSG pipeline and original
+   *  materials are attached on export. Off by default (3D-print workflow). */
+  preserveTextures: boolean;
 }
 
 // ============================================================
@@ -223,6 +231,8 @@ export interface SliceItStore {
 
   // --- UI Actions ---
   setUIState: (state: Partial<UIState>) => void;
+  /** Toggle texture preservation mode with smart warnings. */
+  togglePreserveTextures: () => void;
 
   // --- Log Actions ---
   addLog: (msg: string) => void;

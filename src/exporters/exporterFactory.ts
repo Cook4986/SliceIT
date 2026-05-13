@@ -5,13 +5,28 @@ import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import type { ExportFormat } from '../types/store';
 
+/** Export formats that can carry textures / materials. */
+export const TEXTURE_CAPABLE_FORMATS: ExportFormat[] = ['glb', 'gltf', 'obj'];
+
+/** Export formats that are geometry-only (no texture support). */
+export const GEOMETRY_ONLY_FORMATS: ExportFormat[] = ['stl', 'ply'];
+
 /**
  * Export geometry to a downloadable file.
+ *
+ * @param geometry  The BufferGeometry to export
+ * @param format    Target export format
+ * @param originalFilename  Base filename (extension stripped)
+ * @param originalMaterial  Optional original material from the loaded file.
+ *                          Only used when preserveTextures is true AND format supports it.
+ * @param preserveTextures  When true, attaches originalMaterial to texture-capable exports.
  */
 export function exportGeometry(
   geometry: THREE.BufferGeometry,
   format: ExportFormat,
-  originalFilename: string
+  originalFilename: string,
+  originalMaterial?: THREE.Material | THREE.Material[] | null,
+  preserveTextures?: boolean
 ): void {
   const baseName = originalFilename.replace(/\.[^.]+$/, '');
 
@@ -26,9 +41,18 @@ export function exportGeometry(
     );
   }
 
+  // Resolve the material: use original if texture mode is on and format supports it
+  const useOriginalMat = preserveTextures
+    && originalMaterial
+    && TEXTURE_CAPABLE_FORMATS.includes(format);
+
+  // Pick a single material (use first if array)
+  const resolvedMaterial = useOriginalMat
+    ? (Array.isArray(originalMaterial) ? originalMaterial[0] : originalMaterial)
+    : new THREE.MeshStandardMaterial();
+
   // Create a temp mesh for exporters that need a scene object
-  const material = new THREE.MeshStandardMaterial();
-  const mesh = new THREE.Mesh(geometry, material);
+  const mesh = new THREE.Mesh(geometry, resolvedMaterial);
   // Give the mesh a name so GLTFExporter populates the nodes array.
   // Without this, Blender throws "NoneType object is not iterable" on scene.nodes.
   mesh.name = baseName || 'SliceIT_mesh';
@@ -87,17 +111,31 @@ export function exportGeometry(
       // Normals — recompute from the cloned geometry for consistency
       exportGeo.computeVertexNormals();
 
-      // UVs — zeroed, required for GLTFExporter to include the mesh
+      // UVs — use real UVs if available, otherwise zeroed (required for GLTFExporter)
       const vertCount = exportGeo.attributes.position.count;
       if (vertCount === 0) {
         console.warn('[SliceIT Export] Geometry has 0 vertices — nothing to export.');
         return;
       }
-      exportGeo.setAttribute('uv',
-        new THREE.Float32BufferAttribute(new Float32Array(vertCount * 2), 2)
-      );
+      if (geometry.attributes.uv) {
+        const srcUV = geometry.attributes.uv;
+        exportGeo.setAttribute('uv',
+          new THREE.Float32BufferAttribute(
+            new Float32Array(srcUV.array as Float32Array), 2
+          )
+        );
+      } else {
+        exportGeo.setAttribute('uv',
+          new THREE.Float32BufferAttribute(new Float32Array(vertCount * 2), 2)
+        );
+      }
 
-      const exportMesh = new THREE.Mesh(exportGeo, new THREE.MeshStandardMaterial());
+      // Use original material for GLTF/GLB when preserveTextures is on
+      const exportMaterial = useOriginalMat
+        ? (resolvedMaterial as THREE.Material).clone()
+        : new THREE.MeshStandardMaterial();
+
+      const exportMesh = new THREE.Mesh(exportGeo, exportMaterial);
       exportMesh.name = baseName || 'SliceIT_mesh';
       const exportScene = new THREE.Scene();
       exportScene.add(exportMesh);
@@ -113,7 +151,9 @@ export function exportGeometry(
           // Cleanup
           exportScene.remove(exportMesh);
           exportGeo.dispose();
-          exportMesh.material.dispose();
+          if (exportMaterial !== resolvedMaterial) {
+            (exportMaterial as THREE.Material).dispose();
+          }
         },
         (error) => { throw error; },
         { binary }
@@ -126,7 +166,9 @@ export function exportGeometry(
 
   // Cleanup
   scene.remove(mesh);
-  material.dispose();
+  if (!useOriginalMat) {
+    (resolvedMaterial as THREE.Material).dispose();
+  }
 }
 
 

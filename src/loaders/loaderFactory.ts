@@ -6,9 +6,18 @@ import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { detectFormat } from '../utils/fileUtils';
 
 /**
- * Load a 3D model file and return its BufferGeometry.
+ * Result from loading a 3D model file.
+ * Preserves both geometry AND original material/textures when available.
  */
-export async function loadModelFile(file: File): Promise<THREE.BufferGeometry> {
+export interface LoadResult {
+  geometry: THREE.BufferGeometry;
+  material: THREE.Material | THREE.Material[] | null;
+}
+
+/**
+ * Load a 3D model file and return its BufferGeometry + original material.
+ */
+export async function loadModelFile(file: File): Promise<LoadResult> {
   const format = detectFormat(file.name);
   if (!format) {
     throw new Error(`Unsupported file format: ${file.name}`);
@@ -18,16 +27,16 @@ export async function loadModelFile(file: File): Promise<THREE.BufferGeometry> {
 
   switch (format) {
     case '.stl':
-      return loadSTL(arrayBuffer);
+      return { geometry: loadSTL(arrayBuffer), material: null };
     case '.obj':
       return loadOBJ(await file.text());
     case '.gltf':
     case '.glb':
       return loadGLTF(arrayBuffer, file.name);
     case '.ply':
-      return loadPLY(arrayBuffer);
+      return { geometry: loadPLY(arrayBuffer), material: null };
     case '.xyz':
-      return loadXYZ(await file.text());
+      return { geometry: loadXYZ(await file.text()), material: null };
     case '.3mf':
       throw new Error('3MF loading is not yet implemented.');
     default:
@@ -40,15 +49,17 @@ function loadSTL(buffer: ArrayBuffer): THREE.BufferGeometry {
   return loader.parse(buffer);
 }
 
-function loadOBJ(text: string): THREE.BufferGeometry {
+function loadOBJ(text: string): LoadResult {
   const loader = new OBJLoader();
   const group = loader.parse(text);
 
-  // Extract geometry from the first mesh in the group
+  // Extract geometry and material from the first mesh in the group
   let geometry: THREE.BufferGeometry | null = null;
+  let material: THREE.Material | THREE.Material[] | null = null;
   group.traverse((child) => {
     if (child instanceof THREE.Mesh && !geometry) {
       geometry = child.geometry;
+      material = child.material;
     }
   });
 
@@ -56,17 +67,19 @@ function loadOBJ(text: string): THREE.BufferGeometry {
     throw new Error('No geometry found in OBJ file.');
   }
 
-  return geometry;
+  return { geometry, material };
 }
 
-async function loadGLTF(buffer: ArrayBuffer, _filename: string): Promise<THREE.BufferGeometry> {
+async function loadGLTF(buffer: ArrayBuffer, _filename: string): Promise<LoadResult> {
   return new Promise((resolve, reject) => {
     const loader = new GLTFLoader();
     loader.parse(buffer, '', (gltf) => {
       let geometry: THREE.BufferGeometry | null = null;
+      let material: THREE.Material | THREE.Material[] | null = null;
       gltf.scene.traverse((child) => {
         if (child instanceof THREE.Mesh && !geometry) {
           geometry = child.geometry;
+          material = child.material;
         }
       });
 
@@ -75,7 +88,7 @@ async function loadGLTF(buffer: ArrayBuffer, _filename: string): Promise<THREE.B
         return;
       }
 
-      resolve(geometry);
+      resolve({ geometry, material });
     }, reject);
   });
 }
