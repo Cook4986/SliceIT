@@ -177,4 +177,4 @@ Main Thread                  WebWorker
 
 ## License
 
-[MIT License](LICENSE)
+[MIT License](LICENSE) | Built by <a href="https://mncook.net" style="color: #ff00ff; text-shadow: 0 0 5px #ff00ff; font-family: 'Impact', fantasy; text-decoration: none; letter-spacing: 1px;">mncook.net</a>
