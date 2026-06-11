@@ -170,10 +170,17 @@ async function runBoolean(
 }
 
 // ── Worker API ────────────────────────────────────────────────────────────
+
+// Bump to force a new content hash for the worker bundle. Asset responses
+// are cached as immutable INCLUDING their CSP headers — a worker's CSP comes
+// from its own script's response, so header-only deploys never reach clients
+// that already cached this file under the old policy.
+const WORKER_BUILD = 2;
+
 const slicingAPI = {
   async init(): Promise<void> {
     await loadManifold();
-    console.log('[SlicingWorker] Manifold CSG Engine Initialized');
+    console.log(`[SlicingWorker] Manifold CSG Engine Initialized (build ${WORKER_BUILD})`);
   },
 
   /**
