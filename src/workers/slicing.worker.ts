@@ -9,6 +9,10 @@
  * vertex properties are packed as numProp=5 (x,y,z,u,v). Manifold will
  * automatically interpolate UV coordinates for newly-created vertices at
  * boolean cut boundaries, preserving texture mapping on cropped output.
+ *
+ * All three public cut methods (plane, primitive, lasso) build a cutter in
+ * two representations — a Manifold solid and a THREE.Mesh — then delegate to
+ * a single shared `runBoolean` pipeline (Manifold first, JS-CSG fallback).
  */
 
 import { expose } from 'comlink';
@@ -27,9 +31,15 @@ import type { SliceResult } from './csgUtils';
 
 export type { SliceResult };
 
+/** Boolean operation to apply between model and cutter.
+ *  'subtract' removes the cutter volume; 'intersect' keeps only it. */
+export type BooleanOp = 'subtract' | 'intersect';
+
 // ── Manifold lazy-loader ───────────────────────────────────────────────────
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let manifoldModule: any = null;
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function loadManifold(): Promise<any> {
   if (manifoldModule) return manifoldModule;
   // Dynamic import keeps the WASM out of the initial bundle parse.
@@ -39,6 +49,116 @@ async function loadManifold(): Promise<any> {
   return manifoldModule;
 }
 
+// ── Shared boolean pipeline ────────────────────────────────────────────────
+
+interface PreparedMesh {
+  positions: Float32Array;
+  indices: Uint32Array;
+  uvs: Float32Array | null;
+}
+
+/**
+ * Run a boolean op between the prepared model mesh and a cutter, trying
+ * Manifold (watertight, UV-preserving) first and falling back to
+ * three-csg-ts (no UV support) when Manifold rejects the input.
+ *
+ * @param buildManifoldCutter Builds the cutter as a Manifold solid.
+ * @param buildFallbackCutter Builds the same cutter as a THREE.Mesh
+ *                            (matrixWorld already updated).
+ * @param clampTo             When set, strips artifact triangles outside the
+ *                            bounding sphere of these positions (needed for
+ *                            oversized half-space / prism cutters).
+ */
+async function runBoolean(
+  prepared: PreparedMesh,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  buildManifoldCutter: (wasm: any) => any,
+  buildFallbackCutter: () => THREE.Mesh,
+  clampTo: Float32Array | null,
+  op: BooleanOp,
+  label: string
+): Promise<SliceResult> {
+  const { positions, indices, uvs } = prepared;
+
+  // ── Manifold path ──────────────────────────────────────────────────────
+  try {
+    const wasm = await loadManifold();
+    const { Manifold } = wasm;
+
+    // Manifold automatically repairs winding order during construction.
+    const packed = packVertProperties(positions, uvs);
+    const modelManifold = new Manifold({
+      numProp: packed.numProp,
+      vertProperties: packed.vertProperties,
+      triVerts: indices,
+    });
+
+    const cutter = buildManifoldCutter(wasm);
+    const result = op === 'subtract'
+      ? modelManifold.subtract(cutter)
+      : modelManifold.intersect(cutter);
+
+    if (result.isEmpty()) {
+      throw new Error('Manifold returned empty mesh — falling back to CSG');
+    }
+
+    const resultMesh = result.getMesh();
+    const rawVP = resultMesh.vertProperties instanceof Float32Array
+      ? resultMesh.vertProperties
+      : new Float32Array(resultMesh.vertProperties);
+    const resIndices = resultMesh.triVerts instanceof Uint32Array
+      ? resultMesh.triVerts
+      : new Uint32Array(resultMesh.triVerts);
+
+    const unpacked = unpackVertProperties(rawVP, packed.numProp);
+    const clamped = clampTo
+      ? clampToOriginalBounds(unpacked.positions, resIndices, clampTo)
+      : { positions: unpacked.positions, indices: resIndices };
+
+    console.log(`[SlicingWorker] Manifold ${label} ${op} complete:`,
+      clamped.positions.length / 3, 'verts',
+      unpacked.uvs ? '(UVs preserved)' : '(no UVs)');
+    return { positions: clamped.positions, indices: clamped.indices, uvs: unpacked.uvs };
+  } catch (manifoldErr) {
+    const msg = manifoldErr instanceof Error ? manifoldErr.message : String(manifoldErr);
+    console.warn(`[SlicingWorker] Manifold ${label} failed, falling back to three-csg-ts:`, msg);
+  }
+
+  // ── three-csg-ts fallback (no UV support) ──────────────────────────────
+  if (uvs) {
+    console.warn('[SlicingWorker] three-csg-ts fallback does not preserve UVs — textures will be lost on this cut.');
+  }
+
+  const modelGeo = new THREE.BufferGeometry();
+  modelGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  if (indices.length > 0) {
+    modelGeo.setIndex(new THREE.BufferAttribute(indices, 1));
+  }
+  modelGeo.computeVertexNormals();
+  modelGeo.computeBoundingBox();
+  modelGeo.computeBoundingSphere();
+
+  const modelMesh = new THREE.Mesh(modelGeo, new THREE.MeshBasicMaterial());
+  modelMesh.updateMatrixWorld();
+
+  const cutterMesh = buildFallbackCutter();
+  cutterMesh.updateMatrixWorld();
+
+  const resultMesh = op === 'subtract'
+    ? CSG.subtract(modelMesh, cutterMesh)
+    : CSG.intersect(modelMesh, cutterMesh);
+  const resGeo = resultMesh.geometry as THREE.BufferGeometry;
+  const fallbackPositions = new Float32Array(resGeo.attributes.position.array as Float32Array);
+  const fallbackIndices = resGeo.index
+    ? new Uint32Array(resGeo.index.array as Uint32Array)
+    : new Uint32Array(0);
+
+  const clamped = clampTo
+    ? clampToOriginalBounds(fallbackPositions, fallbackIndices, clampTo)
+    : { positions: fallbackPositions, indices: fallbackIndices };
+  return { positions: clamped.positions, indices: clamped.indices, uvs: null };
+}
+
 // ── Worker API ────────────────────────────────────────────────────────────
 const slicingAPI = {
   async init(): Promise<void> {
@@ -46,118 +166,55 @@ const slicingAPI = {
     console.log('[SlicingWorker] Manifold CSG Engine Initialized');
   },
 
+  /**
+   * Cut with an infinite plane (knife/plane tools). The cutter is a huge
+   * half-space cube whose top face contains `origin` with outward `normal`.
+   */
   async subtractMeshWithPlane(
     modelPositions: Float32Array,
     modelIndices: Uint32Array | null,
     origin: [number, number, number],
     normal: [number, number, number],
-    modelUVs?: Float32Array | null
+    modelUVs?: Float32Array | null,
+    op: BooleanOp = 'subtract'
   ): Promise<SliceResult> {
-
-    // ── Step 1: Ensure indexed geometry ────────────────────────────────
     const prepared = ensureIndexed(modelPositions, modelIndices, modelUVs ?? null);
-    const { positions, indices, uvs } = prepared;
 
-    // ── Step 2: Manifold CSG ────────────────────────────────────────────
-    try {
-      const wasm = await loadManifold();
-      const { Manifold } = wasm;
-
-      // Build Manifold mesh from input geometry.
-      // Manifold automatically repairs winding order during construction.
-      const packed = packVertProperties(positions, uvs);
-      const meshGL = {
-        numProp: packed.numProp,
-        vertProperties: packed.vertProperties,
-        triVerts: indices instanceof Uint32Array ? indices : new Uint32Array(indices),
-      };
-      const modelManifold = new Manifold(meshGL);
-
-      // Build a half-space cutter oriented to the cutting plane.
-      // Strategy: large cube whose +z face sits at the origin, extending in -z.
-      // Rotate so that local +z maps to `normal`, then translate to `origin`.
-      const n = new THREE.Vector3(...normal).normalize();
-      const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
-      const euler = new THREE.Euler().setFromQuaternion(q, 'XYZ');
-      const rotDeg: [number, number, number] = [
-        THREE.MathUtils.radToDeg(euler.x),
-        THREE.MathUtils.radToDeg(euler.y),
-        THREE.MathUtils.radToDeg(euler.z),
-      ];
-
-      const size = HALF_SPACE_SIZE;
-      // Manifold.cube([x,y,z], center=true) → centered cube.
-      // Translate -size/2 in z → top face is now at z=0, box extends into -z.
-      const cutter = Manifold.cube([size, size, size], true)
-        .translate([0, 0, -size / 2])
-        .rotate(rotDeg)
-        .translate(origin);
-
-      // Boolean subtraction — guaranteed watertight by Manifold
-      const result = modelManifold.subtract(cutter);
-
-      if (result.isEmpty()) {
-        throw new Error('Manifold returned empty mesh — falling back to CSG');
-      }
-
-      const resultMesh = result.getMesh();
-      const rawVP = resultMesh.vertProperties instanceof Float32Array
-        ? resultMesh.vertProperties
-        : new Float32Array(resultMesh.vertProperties);
-      const resIndices = resultMesh.triVerts instanceof Uint32Array
-        ? resultMesh.triVerts
-        : new Uint32Array(resultMesh.triVerts);
-
-      // Unpack positions + UVs from the interleaved vertProperties
-      const unpacked = unpackVertProperties(rawVP, packed.numProp);
-      const clamped = clampToOriginalBounds(unpacked.positions, resIndices, positions);
-
-      console.log('[SlicingWorker] Manifold subtraction complete:', clamped.positions.length / 3, 'verts',
-        unpacked.uvs ? '(UVs preserved)' : '(no UVs)');
-      return { positions: clamped.positions, indices: clamped.indices, uvs: unpacked.uvs };
-
-    } catch (manifoldErr: any) {
-      console.warn('[SlicingWorker] Manifold failed, falling back to three-csg-ts:', manifoldErr.message);
-    }
-
-    // ── Step 3: three-csg-ts fallback (no UV support) ──────────────────
-    if (uvs) {
-      console.warn('[SlicingWorker] three-csg-ts fallback does not preserve UVs — textures will be lost on this cut.');
-    }
-    const modelGeo = new THREE.BufferGeometry();
-    modelGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    if (indices && indices.length > 0) {
-      modelGeo.setIndex(new THREE.BufferAttribute(indices, 1));
-    }
-    modelGeo.computeVertexNormals();
-    modelGeo.computeBoundingBox();
-    modelGeo.computeBoundingSphere();
-
-    const modelMesh = new THREE.Mesh(modelGeo, new THREE.MeshBasicMaterial());
-    modelMesh.updateMatrixWorld();
-
+    const n = new THREE.Vector3(...normal).normalize();
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
     const size = HALF_SPACE_SIZE;
-    const cutterGeo = new THREE.BoxGeometry(size, size, size);
-    cutterGeo.translate(0, 0, -size / 2);
 
-    const cutterMesh = new THREE.Mesh(cutterGeo, new THREE.MeshBasicMaterial());
-    cutterMesh.position.set(origin[0], origin[1], origin[2]);
-    cutterMesh.quaternion.setFromUnitVectors(
-      new THREE.Vector3(0, 0, 1),
-      new THREE.Vector3(normal[0], normal[1], normal[2]).normalize()
+    return runBoolean(
+      prepared,
+      (wasm) => {
+        const euler = new THREE.Euler().setFromQuaternion(q, 'XYZ');
+        const rotDeg: [number, number, number] = [
+          THREE.MathUtils.radToDeg(euler.x),
+          THREE.MathUtils.radToDeg(euler.y),
+          THREE.MathUtils.radToDeg(euler.z),
+        ];
+        // Centered cube translated -size/2 in z → top face at z=0, extends
+        // into -z. Rotate local +z onto `normal`, then move to `origin`.
+        return wasm.Manifold.cube([size, size, size], true)
+          .translate([0, 0, -size / 2])
+          .rotate(rotDeg)
+          .translate(origin);
+      },
+      () => {
+        const cutterGeo = new THREE.BoxGeometry(size, size, size);
+        cutterGeo.translate(0, 0, -size / 2);
+        const cutterMesh = new THREE.Mesh(cutterGeo, new THREE.MeshBasicMaterial());
+        cutterMesh.position.set(...origin);
+        cutterMesh.quaternion.copy(q);
+        return cutterMesh;
+      },
+      prepared.positions, // half-space cutter → clamp boundary slivers
+      op,
+      'plane'
     );
-    cutterMesh.updateMatrixWorld();
-
-    const resultMesh = CSG.subtract(modelMesh, cutterMesh);
-    const resGeo = resultMesh.geometry as THREE.BufferGeometry;
-    const fallbackPositions = new Float32Array(resGeo.attributes.position.array as Float32Array);
-    const fallbackIndices = resGeo.index
-      ? new Uint32Array(resGeo.index.array as Uint32Array)
-      : new Uint32Array(0);
-    const clamped = clampToOriginalBounds(fallbackPositions, fallbackIndices, positions);
-    return { positions: clamped.positions, indices: clamped.indices, uvs: null };
   },
 
+  /** Cut with a box or sphere primitive matching the on-screen gizmo. */
   async subtractMeshWithPrimitive(
     modelPositions: Float32Array,
     modelIndices: Uint32Array | null,
@@ -165,89 +222,44 @@ const slicingAPI = {
     position: [number, number, number],
     rotation: [number, number, number],
     scale: [number, number, number],
-    modelUVs?: Float32Array | null
+    modelUVs?: Float32Array | null,
+    op: BooleanOp = 'subtract'
   ): Promise<SliceResult> {
     const prepared = ensureIndexed(modelPositions, modelIndices, modelUVs ?? null);
-    const { positions, indices, uvs } = prepared;
 
-    try {
-      const wasm = await loadManifold();
-      const { Manifold } = wasm;
-
-      const packed = packVertProperties(positions, uvs);
-      const meshGL = {
-        numProp: packed.numProp,
-        vertProperties: packed.vertProperties,
-        triVerts: indices instanceof Uint32Array ? indices : new Uint32Array(indices),
-      };
-      const modelManifold = new Manifold(meshGL);
-
-      let cutter;
-      const rotDeg: [number, number, number] = [
-        THREE.MathUtils.radToDeg(rotation[0]),
-        THREE.MathUtils.radToDeg(rotation[1]),
-        THREE.MathUtils.radToDeg(rotation[2]),
-      ];
-
-      if (primitiveType === 'box') {
-        cutter = Manifold.cube([1, 1, 1], true) // Unit cube
-          .scale(scale)
-          .rotate(rotDeg)
-          .translate(position);
-      } else {
-        cutter = Manifold.sphere(0.5, 64) // Radius 0.5 (diameter 1) to match three.js Box scale
-          .scale(scale)
-          .rotate(rotDeg)
-          .translate(position);
-      }
-
-      const result = modelManifold.subtract(cutter);
-      if (result.isEmpty()) throw new Error('Manifold returned empty mesh — falling back to CSG');
-
-      const resultMesh = result.getMesh();
-      const rawVP = resultMesh.vertProperties instanceof Float32Array
-        ? resultMesh.vertProperties : new Float32Array(resultMesh.vertProperties);
-      const resIndices = resultMesh.triVerts instanceof Uint32Array
-        ? resultMesh.triVerts : new Uint32Array(resultMesh.triVerts);
-
-      const unpacked = unpackVertProperties(rawVP, packed.numProp);
-
-      console.log(`[SlicingWorker] Manifold ${primitiveType} subtraction complete:`, unpacked.positions.length / 3, 'verts',
-        unpacked.uvs ? '(UVs preserved)' : '(no UVs)');
-      return { positions: unpacked.positions, indices: resIndices, uvs: unpacked.uvs };
-
-    } catch (manifoldErr: any) {
-      console.warn(`[SlicingWorker] Manifold ${primitiveType} failed, falling back to three-csg-ts:`, manifoldErr.message);
-    }
-
-    // Fallback (no UV support)
-    if (uvs) {
-      console.warn('[SlicingWorker] three-csg-ts fallback does not preserve UVs.');
-    }
-    const modelGeo = new THREE.BufferGeometry();
-    modelGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    if (indices && indices.length > 0) modelGeo.setIndex(new THREE.BufferAttribute(indices, 1));
-    modelGeo.computeVertexNormals();
-    const modelMesh = new THREE.Mesh(modelGeo, new THREE.MeshBasicMaterial());
-    modelMesh.updateMatrixWorld();
-
-    const cutterGeo = primitiveType === 'box' ? new THREE.BoxGeometry(1, 1, 1) : new THREE.SphereGeometry(0.5, 32, 32);
-    const cutterMesh = new THREE.Mesh(cutterGeo, new THREE.MeshBasicMaterial());
-    cutterMesh.position.set(...position);
-    cutterMesh.rotation.set(...rotation);
-    cutterMesh.scale.set(...scale);
-    cutterMesh.updateMatrixWorld();
-
-    const resultMesh = CSG.subtract(modelMesh, cutterMesh);
-    const resGeo = resultMesh.geometry as THREE.BufferGeometry;
-    const resPositions = resGeo.attributes.position.array as Float32Array;
-    const resIndices = resGeo.index ? resGeo.index.array as Uint32Array : new Uint32Array(0);
-
-    return { positions: resPositions, indices: resIndices, uvs: null };
+    return runBoolean(
+      prepared,
+      (wasm) => {
+        const rotDeg: [number, number, number] = [
+          THREE.MathUtils.radToDeg(rotation[0]),
+          THREE.MathUtils.radToDeg(rotation[1]),
+          THREE.MathUtils.radToDeg(rotation[2]),
+        ];
+        // Unit-size solids (sphere ∅1 to match three.js box scale semantics)
+        const base = primitiveType === 'box'
+          ? wasm.Manifold.cube([1, 1, 1], true)
+          : wasm.Manifold.sphere(0.5, 64);
+        return base.scale(scale).rotate(rotDeg).translate(position);
+      },
+      () => {
+        const cutterGeo = primitiveType === 'box'
+          ? new THREE.BoxGeometry(1, 1, 1)
+          : new THREE.SphereGeometry(0.5, 32, 32);
+        const cutterMesh = new THREE.Mesh(cutterGeo, new THREE.MeshBasicMaterial());
+        cutterMesh.position.set(...position);
+        cutterMesh.rotation.set(...rotation);
+        cutterMesh.scale.set(...scale);
+        return cutterMesh;
+      },
+      null, // bounded cutter → no clamping needed
+      op,
+      primitiveType
+    );
   },
 
   /**
-   * Lasso tool: extrude a polygon along extrusion direction and subtract from mesh.
+   * Lasso tool: extrude a polygon along the camera depth direction and cut
+   * with the resulting prism.
    * polyPoints: flat array of 3D polygon vertices [x0,y0,z0, x1,y1,z1, ...]
    * extrusionDir: unit direction to extrude (camera depth direction)
    * extrusionDepth: how far to extrude (should be ≥ model diameter)
@@ -258,130 +270,63 @@ const slicingAPI = {
     polyPoints: Float32Array,
     extrusionDir: [number, number, number],
     extrusionDepth: number,
-    modelUVs?: Float32Array | null
+    modelUVs?: Float32Array | null,
+    op: BooleanOp = 'subtract'
   ): Promise<SliceResult> {
     const prepared = ensureIndexed(modelPositions, modelIndices, modelUVs ?? null);
-    const { positions, indices, uvs } = prepared;
 
-    // Build extruded prism geometry from polygon
-    // Convert poly points to THREE.Vector3 array
+    // ── Build the extruded prism cutter ────────────────────────────────
     const numVerts = polyPoints.length / 3;
     const polyVerts: THREE.Vector3[] = [];
     for (let i = 0; i < numVerts; i++) {
-      polyVerts.push(new THREE.Vector3(polyPoints[i*3], polyPoints[i*3+1], polyPoints[i*3+2]));
+      polyVerts.push(new THREE.Vector3(polyPoints[i * 3], polyPoints[i * 3 + 1], polyPoints[i * 3 + 2]));
     }
 
-    // Build a local coordinate system for the polygon:
-    // Z axis = extrusion direction, X/Y axes = polygon plane
+    // Local coordinate system: Z = extrusion direction, X/Y = polygon plane
     const extDir = new THREE.Vector3(...extrusionDir).normalize();
     const up = new THREE.Vector3(0, 1, 0);
     if (Math.abs(extDir.dot(up)) > 0.99) up.set(1, 0, 0);
     const localX = new THREE.Vector3().crossVectors(up, extDir).normalize();
     const localY = new THREE.Vector3().crossVectors(extDir, localX).normalize();
 
-    // Project polygon vertices into 2D (local X/Y plane)
     const polyCenter = new THREE.Vector3();
     polyVerts.forEach(v => polyCenter.add(v));
     polyCenter.divideScalar(numVerts);
 
-    // Build a Shape from 2D projections for THREE.js ExtrudeGeometry
+    // Project polygon vertices into 2D for THREE.js ExtrudeGeometry
     const pts2D: THREE.Vector2[] = polyVerts.map(v => {
       const rel = new THREE.Vector3().subVectors(v, polyCenter);
       return new THREE.Vector2(rel.dot(localX), rel.dot(localY));
     });
 
     const shape = new THREE.Shape(pts2D);
+    const extGeo = new THREE.ExtrudeGeometry(shape, { depth: extrusionDepth, bevelEnabled: false });
 
-    // Create extruded geometry
-    const extrudeSettings = {
-      depth: extrusionDepth,
-      bevelEnabled: false,
-    };
-    const extGeo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-
-    // Transform the extruded geometry back to world space
-    // Build rotation matrix from local basis
+    // Transform the extruded geometry back to world space; center the
+    // extrusion so it straddles the polygon plane.
     const rotMatrix = new THREE.Matrix4().makeBasis(localX, localY, extDir);
-    // Translate: center the extrusion so it straddles the polygon plane
     const offsetCenter = polyCenter.clone().add(extDir.clone().multiplyScalar(-extrusionDepth / 2));
     const fullMatrix = new THREE.Matrix4()
       .makeTranslation(offsetCenter.x, offsetCenter.y, offsetCenter.z)
       .multiply(rotMatrix);
     extGeo.applyMatrix4(fullMatrix);
 
-    // Merge vertices on the extruded geo for clean boolean ops
+    // Weld the extruded geo for clean boolean ops
     const mergedExtGeo = mergeVertices(extGeo, WELD_TOLERANCE);
     mergedExtGeo.computeVertexNormals();
 
-    try {
-      const wasm = await loadManifold();
-      const { Manifold } = wasm;
-
-      const packed = packVertProperties(positions, uvs);
-      const meshGL = {
-        numProp: packed.numProp,
-        vertProperties: packed.vertProperties,
-        triVerts: indices instanceof Uint32Array ? indices : new Uint32Array(indices),
-      };
-      const modelManifold = new Manifold(meshGL);
-
-      const cutterGL = {
+    return runBoolean(
+      prepared,
+      (wasm) => new wasm.Manifold({
         numProp: 3,
         vertProperties: new Float32Array(mergedExtGeo.attributes.position.array as Float32Array),
         triVerts: new Uint32Array(mergedExtGeo.index!.array as Uint32Array),
-      };
-      const cutterManifold = new Manifold(cutterGL);
-
-      const result = modelManifold.subtract(cutterManifold);
-      if (result.isEmpty()) throw new Error('Manifold returned empty mesh');
-
-      const resultMesh = result.getMesh();
-      const rawVP = resultMesh.vertProperties instanceof Float32Array
-        ? resultMesh.vertProperties : new Float32Array(resultMesh.vertProperties);
-      const resIndices = resultMesh.triVerts instanceof Uint32Array
-        ? resultMesh.triVerts : new Uint32Array(resultMesh.triVerts);
-
-      const unpacked = unpackVertProperties(rawVP, packed.numProp);
-      const clamped = clampToOriginalBounds(unpacked.positions, resIndices, modelPositions);
-
-      console.log('[SlicingWorker] Manifold lasso subtraction complete:', clamped.positions.length / 3, 'verts',
-        unpacked.uvs ? '(UVs preserved)' : '(no UVs)');
-      return { positions: clamped.positions, indices: clamped.indices, uvs: unpacked.uvs };
-
-    } catch (manifoldErr: any) {
-      console.warn('[SlicingWorker] Manifold lasso failed, falling back to three-csg-ts:', manifoldErr.message);
-    }
-
-    // Fallback: three-csg-ts (no UV support)
-    if (uvs) {
-      console.warn('[SlicingWorker] three-csg-ts fallback does not preserve UVs.');
-    }
-    const modelGeo = new THREE.BufferGeometry();
-    modelGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    if (indices && indices.length > 0) modelGeo.setIndex(new THREE.BufferAttribute(indices, 1));
-    modelGeo.computeVertexNormals();
-    const modelMesh = new THREE.Mesh(modelGeo, new THREE.MeshBasicMaterial());
-    modelMesh.updateMatrixWorld();
-
-    const cutterMesh = new THREE.Mesh(mergedExtGeo, new THREE.MeshBasicMaterial());
-    cutterMesh.updateMatrixWorld();
-
-    const resultMesh = CSG.subtract(modelMesh, cutterMesh);
-    const resGeo = resultMesh.geometry as THREE.BufferGeometry;
-    const fallbackPositions = new Float32Array(resGeo.attributes.position.array as Float32Array);
-    const fallbackIndices = resGeo.index
-      ? new Uint32Array(resGeo.index.array as Uint32Array)
-      : new Uint32Array(0);
-    const clamped = clampToOriginalBounds(fallbackPositions, fallbackIndices, modelPositions);
-    return { positions: clamped.positions, indices: clamped.indices, uvs: null };
-  },
-
-  async filterPointCloud(
-    _points: Float32Array,
-    _toolType: string,
-    _toolParams: unknown
-  ): Promise<Float32Array> {
-    throw new Error('Point cloud filtering not yet implemented. Coming in Phase 5.');
+      }),
+      () => new THREE.Mesh(mergedExtGeo, new THREE.MeshBasicMaterial()),
+      modelPositions, // prism extends far beyond the model → clamp slivers
+      op,
+      'lasso'
+    );
   },
 };
 

@@ -20,15 +20,6 @@ export const SUPPORTED_IMPORT_FORMATS = [
   '.stl', '.obj', '.gltf', '.glb', '.ply', '.xyz',
 ];
 
-/** Supported export formats */
-export const SUPPORTED_EXPORT_FORMATS = [
-  { value: 'stl', label: 'STL (Binary)' },
-  { value: 'ply', label: 'PLY' },
-  { value: 'obj', label: 'OBJ' },
-  { value: 'gltf', label: 'glTF' },
-  { value: 'glb', label: 'GLB (Binary glTF)' },
-] as const;
-
 /** Toast auto-dismiss duration (ms) */
 export const TOAST_DURATION = 5000;
 
@@ -39,5 +30,14 @@ export const DEFAULT_TOOL_TRANSFORM = {
   scale: [1, 1, 1] as [number, number, number],
 };
 
-/** Default camera distance multiplier */
-export const DEFAULT_CAMERA_DISTANCE = 5;
+/** Lasso: auto-close after this many anchor points */
+export const LASSO_MAX_POINTS = 9;
+
+/** Lasso: clicks within this fraction of the model radius close the loop */
+export const LASSO_CLOSE_RADIUS_FRACTION = 0.08;
+
+/** Lasso extrusion depth = model radius × this factor (punches through) */
+export const LASSO_EXTRUSION_FACTOR = 6;
+
+/** Normalized size models are scaled to on import */
+export const MODEL_NORMALIZED_SIZE = 2;

@@ -68,9 +68,6 @@ export interface ToolState {
   /** Current transform mode for TransformControls */
   transformMode: TransformMode;
 
-  /** Points for knife/lasso tools (screen-space) */
-  drawingPoints: [number, number][];
-
   /** Whether the user is currently drawing (knife/lasso) */
   isDrawing: boolean;
 
@@ -163,7 +160,6 @@ export interface ToastMessage {
 // ============================================================
 
 export interface UIState {
-  showImportModal: boolean;
   showFloatingInspector: boolean;
   floatingInspectorPos: [number, number];
   showExportModal: boolean;
@@ -206,20 +202,17 @@ export interface SliceItStore {
 
   // --- View Actions ---
   setActiveView: (index: number) => void;
-  resetCameras: () => void;
 
   // --- Tool Actions ---
   setActiveTool: (tool: ToolType | null) => void;
   setTransformMode: (mode: TransformMode) => void;
   updateToolTransform: (transform: Partial<ToolTransform>) => void;
-  addDrawingPoint: (point: [number, number]) => void;
   updatePoint: (index: number, pos: [number, number, number]) => void;
   /** Replace all tool points at once (used by the lasso gizmo write-back). */
   setToolPoints: (points: [number, number, number][]) => void;
   addAnchor: (pos: [number, number, number]) => void;
   updatePlaneNormal: (normal: [number, number, number], remote?: boolean) => void;
   updatePlanePosition: (pos: [number, number, number]) => void;
-  completeDrawing: () => void;
   cancelDrawing: () => void;
 
   // --- Slice Actions ---
