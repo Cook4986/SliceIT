@@ -28,7 +28,10 @@ export function exportGeometry(
   originalMaterial?: THREE.Material | THREE.Material[] | null,
   preserveTextures?: boolean
 ): void {
-  const baseName = originalFilename.replace(/\.[^.]+$/, '');
+  // "model_cube.stl" → "model_cube_sliced" (guard against double-appending
+  // when a previously exported file is re-imported and exported again).
+  const stripped = originalFilename.replace(/\.[^.]+$/, '');
+  const baseName = stripped.endsWith('_sliced') ? stripped : `${stripped}_sliced`;
 
   // Bug 4a fix: ensure geometry is export-ready.
   // Many exporters (GLTFExporter) require UV coordinates to include the mesh

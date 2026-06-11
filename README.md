@@ -106,7 +106,7 @@ The Settings panel (⚙️) also controls:
 ### Export
 GLB · STL · OBJ · PLY · glTF
 
-*Exports include UV attributes and mesh names for clean imports into Blender, MeshLab, Sketchfab, etc.*
+*Exported files are suffixed `_sliced` (e.g. `model_cube` → `model_cube_sliced.stl`) and include UV attributes and mesh names for clean imports into Blender, MeshLab, Sketchfab, etc.*
 
 ---
 
