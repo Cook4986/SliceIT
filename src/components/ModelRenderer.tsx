@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useRef } from 'react';
+import { useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { useStore } from '../store/useStore';
 import { useClippingPlanes } from '../hooks/useClippingPlanes';
@@ -28,40 +28,21 @@ export function ModelRenderer() {
   }, [activeTool]);
 
   // Prepare the original material for viewport rendering when texture mode is on.
-  // We clone it once to avoid mutating the stored material (which is also used for export).
-  const clonedOriginalRef = useRef<THREE.Material | null>(null);
-
+  // Clone it so viewport-specific properties (clipping, side) don't pollute
+  // the stored original, which is also used for export.
   const texturedMaterial = useMemo(() => {
-    if (!hasOriginalMaterial) {
-      // Dispose any previous clone
-      if (clonedOriginalRef.current) {
-        clonedOriginalRef.current.dispose();
-        clonedOriginalRef.current = null;
-      }
-      return null;
-    }
-
-    // Clone the material so viewport-specific properties (clipping, side)
-    // don't pollute the stored original used for export.
-    const source = Array.isArray(originalMaterial) ? originalMaterial[0] : originalMaterial;
+    if (!hasOriginalMaterial) return null;
+    const source = Array.isArray(originalMaterial) ? originalMaterial[0] : originalMaterial!;
     const cloned = source.clone();
-
-    // Ensure it works well in the viewport
     cloned.side = THREE.DoubleSide;
-    if (cloned instanceof THREE.MeshStandardMaterial || cloned instanceof THREE.MeshPhysicalMaterial) {
-      // Keep the original's textures, colors, and PBR settings as-is
-    } else if (cloned instanceof THREE.MeshBasicMaterial) {
-      // MeshBasicMaterial is fine — it just won't react to lighting
-    }
-
-    // Dispose previous clone
-    if (clonedOriginalRef.current && clonedOriginalRef.current !== cloned) {
-      clonedOriginalRef.current.dispose();
-    }
-    clonedOriginalRef.current = cloned;
-
     return cloned;
   }, [hasOriginalMaterial, originalMaterial]);
+
+  // Dispose each clone when it's replaced or the renderer unmounts.
+  useEffect(() => {
+    if (!texturedMaterial) return;
+    return () => texturedMaterial.dispose();
+  }, [texturedMaterial]);
 
   const pointsMaterial = useMemo(() => {
     return new THREE.PointsMaterial({
@@ -82,16 +63,6 @@ export function ModelRenderer() {
     }
     activeMaterial.needsUpdate = true;
   }, [clippingPlanes, activeMaterial, activeTool]);
-
-  // Cleanup cloned material on unmount
-  useEffect(() => {
-    return () => {
-      if (clonedOriginalRef.current) {
-        clonedOriginalRef.current.dispose();
-        clonedOriginalRef.current = null;
-      }
-    };
-  }, []);
 
   if (!geometry) return null;
 

@@ -10,9 +10,14 @@ export const MAX_FILE_SIZE = 500 * 1024 * 1024;
 /** File size warning threshold (100MB) */
 export const FILE_SIZE_WARNING = 100 * 1024 * 1024;
 
-/** Supported import formats */
+/** Maximum vertex count accepted after parsing. A file can be small on disk
+ *  (dense ASCII STL/PLY/XYZ) yet decode to a mesh that exhausts memory during
+ *  CSG and undo serialization — enforce a budget at the geometry level too. */
+export const MAX_VERTICES = 10_000_000;
+
+/** Supported import formats. (3MF intentionally absent — no loader yet.) */
 export const SUPPORTED_IMPORT_FORMATS = [
-  '.stl', '.obj', '.gltf', '.glb', '.ply', '.3mf', '.xyz',
+  '.stl', '.obj', '.gltf', '.glb', '.ply', '.xyz',
 ];
 
 /** Supported export formats */

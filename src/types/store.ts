@@ -215,7 +215,7 @@ export interface SliceItStore {
   /** Replace all tool points at once (used by the lasso gizmo write-back). */
   setToolPoints: (points: [number, number, number][]) => void;
   addAnchor: (pos: [number, number, number]) => void;
-  updatePlaneNormal: (normal: [number, number, number]) => void;
+  updatePlaneNormal: (normal: [number, number, number], remote?: boolean) => void;
   updatePlanePosition: (pos: [number, number, number]) => void;
   completeDrawing: () => void;
   cancelDrawing: () => void;

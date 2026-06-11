@@ -1,5 +1,12 @@
-/* === 90s "Bop It" Inspired Fonts === */
-@import url('https://fonts.googleapis.com/css2?family=Luckiest+Guy&family=Titan+One&family=Fredoka:wght@600;700&family=JetBrains+Mono:wght@700;900&display=swap');
+/* === 90s "Bop It" Inspired Fonts (self-hosted via @fontsource) ===
+   Self-hosting removes the Google Fonts third-party request: faster first
+   paint, no CDN dependency, and a strict same-origin CSP becomes possible. */
+@import "@fontsource/luckiest-guy/latin-400.css";
+@import "@fontsource/titan-one/latin-400.css";
+@import "@fontsource/fredoka/latin-600.css";
+@import "@fontsource/fredoka/latin-700.css";
+@import "@fontsource/jetbrains-mono/latin-700.css";
+@import "@fontsource/jetbrains-mono/latin-800.css";
 
 @import "tailwindcss";
 

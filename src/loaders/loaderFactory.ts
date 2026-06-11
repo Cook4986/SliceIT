@@ -4,6 +4,7 @@ import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { detectFormat } from '../utils/fileUtils';
+import { MAX_VERTICES } from '../config/constants';
 
 /**
  * Result from loading a 3D model file.
@@ -24,24 +25,41 @@ export async function loadModelFile(file: File): Promise<LoadResult> {
   }
 
   const arrayBuffer = await file.arrayBuffer();
+  let result: LoadResult;
 
   switch (format) {
     case '.stl':
-      return { geometry: loadSTL(arrayBuffer), material: null };
+      result = { geometry: loadSTL(arrayBuffer), material: null };
+      break;
     case '.obj':
-      return loadOBJ(await file.text());
+      result = loadOBJ(await file.text());
+      break;
     case '.gltf':
     case '.glb':
-      return loadGLTF(arrayBuffer, file.name);
+      result = await loadGLTF(arrayBuffer, file.name);
+      break;
     case '.ply':
-      return { geometry: loadPLY(arrayBuffer), material: null };
+      result = { geometry: loadPLY(arrayBuffer), material: null };
+      break;
     case '.xyz':
-      return { geometry: loadXYZ(await file.text()), material: null };
-    case '.3mf':
-      throw new Error('3MF loading is not yet implemented.');
+      result = { geometry: parseXYZ(await file.text()), material: null };
+      break;
     default:
       throw new Error(`Unsupported format: ${format}`);
   }
+
+  // Post-parse vertex budget: the byte-size check can't catch dense ASCII
+  // formats that decode to enormous meshes. Reject before any further
+  // processing (centering, normals, CSG, undo serialization).
+  const vertexCount = result.geometry.attributes.position?.count ?? 0;
+  if (vertexCount > MAX_VERTICES) {
+    result.geometry.dispose();
+    throw new Error(
+      `Model has ${vertexCount.toLocaleString()} vertices — the maximum is ${MAX_VERTICES.toLocaleString()}.`
+    );
+  }
+
+  return result;
 }
 
 function loadSTL(buffer: ArrayBuffer): THREE.BufferGeometry {
@@ -100,18 +118,34 @@ function loadPLY(buffer: ArrayBuffer): THREE.BufferGeometry {
 
 /**
  * Parse XYZ point cloud format (space-delimited x y z per line).
+ *
+ * Hardened against malformed input: comment lines are skipped, every
+ * coordinate must be a finite number (strict `Number()` — no `parseFloat`
+ * prefix-parsing), and the total point count is capped so a pathological
+ * file can't exhaust memory.
+ *
+ * Exported for unit testing.
  */
-function loadXYZ(text: string): THREE.BufferGeometry {
-  const lines = text.trim().split('\n');
+export function parseXYZ(text: string): THREE.BufferGeometry {
+  const lines = text.split('\n');
   const positions: number[] = [];
 
   for (const line of lines) {
-    const parts = line.trim().split(/\s+/);
-    if (parts.length >= 3) {
-      positions.push(
-        parseFloat(parts[0]),
-        parseFloat(parts[1]),
-        parseFloat(parts[2])
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('//')) continue;
+
+    const parts = trimmed.split(/\s+/);
+    if (parts.length < 3) continue;
+
+    const x = Number(parts[0]);
+    const y = Number(parts[1]);
+    const z = Number(parts[2]);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+
+    positions.push(x, y, z);
+    if (positions.length / 3 > MAX_VERTICES) {
+      throw new Error(
+        `Point cloud exceeds the ${MAX_VERTICES.toLocaleString()}-point limit.`
       );
     }
   }

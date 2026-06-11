@@ -1,4 +1,5 @@
 import { useStore } from '../store/useStore';
+import { SUPPORTED_IMPORT_FORMATS } from '../config/constants';
 
 export function EmptyState() {
   const importModel = useStore(s => s.importModel);
@@ -35,7 +36,7 @@ export function EmptyState() {
         <input
           id="main-import"
           type="file"
-          accept=".stl,.obj,.gltf,.glb,.ply,.3mf,.xyz"
+          accept={SUPPORTED_IMPORT_FORMATS.join(',')}
           style={{ display: 'none' }}
           onChange={handleFileChange}
           disabled={isSlicing}

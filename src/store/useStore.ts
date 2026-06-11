@@ -191,7 +191,9 @@ export const useStore = create<SliceItStore>()(
         }
       } catch (error: unknown) {
         set({ operation: { isSlicing: false, progress: 0, statusText: '' } });
-        get().addToast('error', `Load failed`);
+        const detail = error instanceof Error ? error.message : 'Unknown error';
+        get().addToast('error', `Load failed: ${detail}`);
+        get().addLog(`Load failed: ${detail}`);
       }
     },
 
@@ -212,7 +214,9 @@ export const useStore = create<SliceItStore>()(
           get().addToast('success', `Exported as ${format.toUpperCase()}`);
         }
       } catch (error: unknown) {
-        get().addToast('error', `Export failed`);
+        const detail = error instanceof Error ? error.message : 'Unknown error';
+        get().addToast('error', `Export failed: ${detail}`);
+        get().addLog(`Export failed: ${detail}`);
       }
     },
 
@@ -915,17 +919,53 @@ export const useStore = create<SliceItStore>()(
 );
 
 // === Message Handling ===
-syncChannel.onmessage = (event) => {
-  const { type, ...data } = event.data;
-  const store = useStore.getState();
 
-  if (type === 'CAMERA_SYNC') {
-    store.setCameraSync(data, true);
-  } else if (type === 'POINTER_SYNC') {
-    store.setSharedPointer(data.pos, true);
-  } else if (type === 'ACTIVE_VIEW_SYNC') {
-    store.setActiveViewIndex(data.index, true);
-  } else if (type === 'PRESET_SYNC') {
-    store.loadPreset(data.presetType, true);
+/** Validate that a value is a finite [x, y, z] tuple. */
+const isVec3 = (v: unknown): v is [number, number, number] =>
+  Array.isArray(v) &&
+  v.length === 3 &&
+  v.every(n => typeof n === 'number' && Number.isFinite(n));
+
+// BroadcastChannel messages arrive from OTHER same-origin tabs — they must be
+// treated as untrusted input. Every field is validated before being applied;
+// a malformed message (wrong shape, out-of-range view index, NaN coordinates)
+// is silently ignored instead of corrupting state or crashing a render.
+syncChannel.onmessage = (event) => {
+  try {
+    const data = event.data;
+    if (!data || typeof data !== 'object' || typeof data.type !== 'string') return;
+    const store = useStore.getState();
+
+    switch (data.type) {
+      case 'CAMERA_SYNC': {
+        const sync: Partial<{ target: [number, number, number]; zoomScale: number }> = {};
+        if (isVec3(data.target)) sync.target = data.target;
+        if (typeof data.zoomScale === 'number' && Number.isFinite(data.zoomScale)) {
+          sync.zoomScale = data.zoomScale;
+        }
+        if (Object.keys(sync).length > 0) store.setCameraSync(sync, true);
+        break;
+      }
+      case 'POINTER_SYNC':
+        if (data.pos === null || isVec3(data.pos)) store.setSharedPointer(data.pos, true);
+        break;
+      case 'ACTIVE_VIEW_SYNC':
+        if (Number.isInteger(data.index) && data.index >= 0 && data.index < VIEW_CONFIGS.length) {
+          store.setActiveViewIndex(data.index, true);
+        }
+        break;
+      case 'PRESET_SYNC':
+        if (data.presetType === 'box' || data.presetType === 'sphere') {
+          store.loadPreset(data.presetType, true);
+        }
+        break;
+      case 'KNIFE_NORMAL_SYNC':
+        // Previously broadcast but never handled — knife normals silently
+        // desynced across windows.
+        if (isVec3(data.normal)) store.updatePlaneNormal(data.normal, true);
+        break;
+    }
+  } catch {
+    // A malformed sync message must never take down the app.
   }
 };

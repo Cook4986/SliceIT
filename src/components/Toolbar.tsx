@@ -1,5 +1,6 @@
 import { useStore } from '../store/useStore';
 import type { ToolType } from '../types/store';
+import { SUPPORTED_IMPORT_FORMATS } from '../config/constants';
 import { useRef } from 'react';
 
 export function Toolbar() {
@@ -41,7 +42,7 @@ export function Toolbar() {
       <input
         ref={fileInputRef}
         type="file"
-        accept=".stl,.obj,.gltf,.glb,.ply,.3mf,.xyz"
+        accept={SUPPORTED_IMPORT_FORMATS.join(',')}
         style={{ display: 'none' }}
         onChange={handleFileChange}
       />
