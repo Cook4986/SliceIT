@@ -56,6 +56,13 @@ export function EmptyState() {
         >
           Cube It! (Box)
         </button>
+        <button 
+          className="preset-btn"
+          style={{ background: 'var(--color-accent-pink)' }}
+          onClick={() => useStore.getState().loadPreset('sphere')}
+        >
+          Bop It! (Sphere)
+        </button>
       </div>
 
     </div>

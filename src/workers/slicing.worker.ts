@@ -35,6 +35,16 @@ export type { SliceResult };
  *  'subtract' removes the cutter volume; 'intersect' keeps only it. */
 export type BooleanOp = 'subtract' | 'intersect';
 
+/** Tool descriptions for point-cloud filtering (no CSG required —
+ *  points are kept or removed by analytic containment tests). */
+export type PointCloudTool =
+  | { kind: 'plane'; origin: [number, number, number]; normal: [number, number, number] }
+  | { kind: 'box' | 'sphere';
+      position: [number, number, number];
+      rotation: [number, number, number];
+      scale: [number, number, number] }
+  | { kind: 'lasso'; polyPoints: Float32Array; extrusionDir: [number, number, number] };
+
 // ── Manifold lazy-loader ───────────────────────────────────────────────────
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let manifoldModule: any = null;
@@ -327,6 +337,100 @@ const slicingAPI = {
       op,
       'lasso'
     );
+  },
+
+  /**
+   * Filter a point cloud against a cutting tool. Unlike meshes, points need
+   * no CSG: each point is kept or dropped by an analytic containment test.
+   * 'subtract' keeps points OUTSIDE the tool volume; 'intersect' keeps the
+   * points INSIDE it.
+   */
+  async filterPointCloud(
+    points: Float32Array,
+    tool: PointCloudTool,
+    op: BooleanOp = 'subtract'
+  ): Promise<Float32Array> {
+    const count = points.length / 3;
+
+    // Per-tool "is this point inside the cutter volume" predicate.
+    let insideTest: (x: number, y: number, z: number) => boolean;
+
+    if (tool.kind === 'plane') {
+      // The mesh half-space cutter occupies the −normal side of the plane.
+      const [ox, oy, oz] = tool.origin;
+      const n = new THREE.Vector3(...tool.normal).normalize();
+      insideTest = (x, y, z) =>
+        (x - ox) * n.x + (y - oy) * n.y + (z - oz) * n.z <= 0;
+    } else if (tool.kind === 'lasso') {
+      // Lasso: project each point onto the polygon's plane basis and run a
+      // 2D point-in-polygon test (the prism is treated as infinite along
+      // the extrusion direction — it always punches through the cloud).
+      // Destructured locals: TS narrowing does not survive into closures.
+      const { polyPoints, extrusionDir } = tool;
+      const extDir = new THREE.Vector3(...extrusionDir).normalize();
+      const up = new THREE.Vector3(0, 1, 0);
+      if (Math.abs(extDir.dot(up)) > 0.99) up.set(1, 0, 0);
+      const localX = new THREE.Vector3().crossVectors(up, extDir).normalize();
+      const localY = new THREE.Vector3().crossVectors(extDir, localX).normalize();
+
+      const polyCount = polyPoints.length / 3;
+      const px: number[] = [];
+      const py: number[] = [];
+      const v = new THREE.Vector3();
+      for (let i = 0; i < polyCount; i++) {
+        v.set(polyPoints[i * 3], polyPoints[i * 3 + 1], polyPoints[i * 3 + 2]);
+        px.push(v.dot(localX));
+        py.push(v.dot(localY));
+      }
+
+      insideTest = (x, y, z) => {
+        v.set(x, y, z);
+        const sx = v.dot(localX);
+        const sy = v.dot(localY);
+        // Ray-casting point-in-polygon
+        let inside = false;
+        for (let i = 0, j = polyCount - 1; i < polyCount; j = i++) {
+          const intersects = ((py[i] > sy) !== (py[j] > sy)) &&
+            (sx < (px[j] - px[i]) * (sy - py[i]) / (py[j] - py[i]) + px[i]);
+          if (intersects) inside = !inside;
+        }
+        return inside;
+      };
+    } else {
+      // Box / sphere: transform points into the primitive's local space;
+      // the primitives are unit-sized (cube 1³, sphere ∅1) under their TRS —
+      // same convention as the mesh cutters.
+      const isBox = tool.kind === 'box';
+      const mat = new THREE.Matrix4().compose(
+        new THREE.Vector3(...tool.position),
+        new THREE.Quaternion().setFromEuler(new THREE.Euler(...tool.rotation)),
+        new THREE.Vector3(...tool.scale)
+      ).invert();
+      const v = new THREE.Vector3();
+      insideTest = isBox
+        ? (x, y, z) => {
+            v.set(x, y, z).applyMatrix4(mat);
+            return Math.abs(v.x) <= 0.5 && Math.abs(v.y) <= 0.5 && Math.abs(v.z) <= 0.5;
+          }
+        : (x, y, z) => {
+            v.set(x, y, z).applyMatrix4(mat);
+            return v.lengthSq() <= 0.25; // radius 0.5
+          };
+    }
+
+    const kept: number[] = [];
+    const keepInside = op === 'intersect';
+    for (let i = 0; i < count; i++) {
+      const x = points[i * 3];
+      const y = points[i * 3 + 1];
+      const z = points[i * 3 + 2];
+      if (insideTest(x, y, z) === keepInside) {
+        kept.push(x, y, z);
+      }
+    }
+
+    console.log(`[SlicingWorker] Point cloud filter (${tool.kind}, ${op}): kept ${kept.length / 3}/${count} points`);
+    return new Float32Array(kept);
   },
 };
 

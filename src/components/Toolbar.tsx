@@ -1,7 +1,13 @@
 import { useStore } from '../store/useStore';
-import type { ToolType } from '../types/store';
+import type { ToolType, SliceMode } from '../types/store';
 import { SUPPORTED_IMPORT_FORMATS } from '../config/constants';
 import { useRef } from 'react';
+
+const MODE_META: Record<SliceMode, { icon: string; label: string; next: SliceMode }> = {
+  subtract: { icon: '✂️', label: 'CUT — remove the tool volume', next: 'intersect' },
+  intersect: { icon: '🎯', label: 'KEEP — keep only the tool volume', next: 'both' },
+  both: { icon: '💥', label: 'BOTH — keep both halves, exploded apart', next: 'subtract' },
+};
 
 export function Toolbar() {
   const activeTool = useStore(s => s.tool.activeTool);
@@ -21,6 +27,8 @@ export function Toolbar() {
   const redo = useStore(s => s.redo);
   const setUIState = useStore(s => s.setUIState);
   const togglePreserveTextures = useStore(s => s.togglePreserveTextures);
+  const sliceMode = useStore(s => s.sliceMode);
+  const setSliceMode = useStore(s => s.setSliceMode);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -35,6 +43,7 @@ export function Toolbar() {
     { type: 'lasso', icon: '🤠', label: 'Rope It', shortcut: 'L' },
     { type: 'box', icon: '📦', label: 'Cube It', shortcut: 'B' },
     { type: 'sphere', icon: '⚽', label: 'Bop It', shortcut: 'S' },
+    { type: 'plane', icon: '🛹', label: 'Plane It', shortcut: 'P' },
   ];
 
   return (
@@ -83,6 +92,15 @@ export function Toolbar() {
       <div className="tool-separator" />
 
       <button
+        className="tool-btn"
+        title={`Slice mode: ${MODE_META[sliceMode].label} (click to change)`}
+        aria-label={`Slice mode: ${MODE_META[sliceMode].label}`}
+        onClick={() => setSliceMode(MODE_META[sliceMode].next)}
+      >
+        <span style={{ fontSize: '18px' }} aria-hidden="true">{MODE_META[sliceMode].icon}</span>
+      </button>
+
+      <button
         className={`slice-btn ${isSlicing ? 'slicing' : ''}`}
         disabled={!hasModel || !activeTool || isSlicing}
         onClick={() => executeSlice()}
@@ -128,6 +146,15 @@ export function Toolbar() {
       {preserveTextures && hasOriginalMaterial && (
         <span className="texture-indicator">TEX</span>
       )}
+
+      <button
+        className="tool-btn"
+        title="Tweak It! — settings"
+        aria-label="Open settings"
+        onClick={() => setUIState({ showSettings: true })}
+      >
+        <span style={{ fontSize: '18px' }} aria-hidden="true">⚙️</span>
+      </button>
     </div>
   );
 }

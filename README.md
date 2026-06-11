@@ -15,7 +15,7 @@
 
 **Browser-based 3D mesh slicer. No installs. No sign-ups. Just slicing.**
 
-[![React 18](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react)](https://react.dev)
+[![React 19](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react)](https://react.dev)
 [![Three.js](https://img.shields.io/badge/Three.js-r164-black?style=flat-square&logo=threedotjs)](https://threejs.org)
 [![Manifold-3D](https://img.shields.io/badge/CSG-manifold--3d-blueviolet?style=flat-square)](https://manifoldcad.org)
 [![MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
@@ -45,7 +45,15 @@ It runs entirely client-side, meaning there are no backend servers or uploads re
 
 ## Features & Tools
 
-SliceIT! provides four specialized tools to manipulate your models. 
+SliceIT! provides five specialized tools to manipulate your models, plus three slice modes:
+
+| Mode | Effect |
+|------|--------|
+| ✂️ **CUT** | Remove the tool volume from the model (default) |
+| 🎯 **KEEP** | Keep only what the tool covers |
+| 💥 **BOTH** | Keep both halves, offset apart (meshes only) |
+
+Cycle modes with the toolbar button or pick one in Settings (⚙️).
 
 ### 🔪 Slice It (Knife Tool)
 **Key: `K`**  
@@ -73,6 +81,10 @@ Use the Sphere tool for scalable spherical subtractions. Perfect for creating ro
 
 ![Bop It](Bop%20It.png)
 
+### 🛹 Plane It (Plane Tool)
+**Key: `P`**  
+A free-floating cutting plane with move/rotate gizmos — no clicks on the model required. The GPU preview shows exactly which side will be removed.
+
 ### Transform Controls
 After placing a tool, use the transform controls to fine-tune its position, rotation, and scale:
 
@@ -90,11 +102,10 @@ After placing a tool, use the transform controls to fine-tune its position, rota
 | Format | Extension | Notes |
 |--------|-----------|-------|
 | STL | `.stl` | Standard |
-| OBJ | `.obj` | Standard |
-| glTF / GLB | `.gltf` `.glb` | Standard |
+| OBJ | `.obj` | Standard (materials preserved) |
+| glTF / GLB | `.gltf` `.glb` | Standard (materials preserved) |
 | PLY | `.ply` | Standard |
-| 3MF | `.3mf` | Standard |
-| XYZ | `.xyz` | Point cloud (Experimental) |
+| XYZ | `.xyz` | Point cloud — sliced via per-point filtering |
 
 ### Export
 | Format | Extension |
@@ -122,6 +133,12 @@ npm run dev
 
 *Requires Node 18+. No environment variables are needed.*
 
+```bash
+npm test        # vitest unit suite (geometry, CSG helpers, store)
+npm run lint    # ESLint flat config
+npm run build   # type-check + production bundle
+```
+
 ---
 
 ## Architecture
@@ -141,12 +158,13 @@ Main Thread                  WebWorker
 
 | Layer | Technology |
 |-------|-----------|
-| **UI** | React 18, TypeScript |
+| **UI** | React 19, TypeScript |
 | **3D Rendering** | Three.js, React Three Fiber, drei |
 | **CSG Engine** | manifold-3d (WASM), three-csg-ts |
-| **State** | Zustand |
+| **State** | Zustand (sliced store: model / tool / view / operation / history / ui) |
 | **Workers** | Comlink |
 | **Build Tool** | Vite 6 |
+| **Tests** | Vitest |
 
 ---
 
@@ -158,11 +176,18 @@ Main Thread                  WebWorker
 | `L` | Lasso tool |
 | `B` | Box tool |
 | `S` | Sphere tool |
+| `P` | Plane tool |
 | `W` | Translate mode |
 | `E` | Rotate mode |
 | `R` | Scale mode |
+| `Enter` | Execute slice |
+| `Esc` | Close overlay / cancel drawing / deselect tool |
+| `1`–`9` | Select viewport |
 | `⌘Z` | Undo |
 | `⌘⇧Z` | Redo |
+| `?` | Shortcut help overlay |
+
+Right-click a viewport (without dragging) for the quick-slice context menu.
 
 ---
 
@@ -170,8 +195,9 @@ Main Thread                  WebWorker
 
 - **WASM Cold-Start:** The very first slice has a ~1s initialization latency.
 - **Open Shells:** Non-solid geometry (like terrain or single-plane section cuts) may produce unexpected boolean results.
-- **Textures:** Currently handles geometry only. Placeholder UVs are added upon export to ensure compatibility.
-- **Lasso Tool:** Extrudes as a half-space. Per-vertex filtering is planned for a future update.
+- **Textures:** With Texture Preservation (🎨) ON, UVs survive cuts on original surfaces, but freshly created cut faces have interpolated (smeared) texture coordinates. The three-csg-ts fallback path drops UVs entirely.
+- **Point Clouds:** Sliced via per-point filtering — the BOTH mode applies to meshes only.
+- **3MF:** Not supported (no loader).
 
 ---
 

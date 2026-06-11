@@ -41,3 +41,6 @@ export const LASSO_EXTRUSION_FACTOR = 6;
 
 /** Normalized size models are scaled to on import */
 export const MODEL_NORMALIZED_SIZE = 2;
+
+/** "Keep both" mode: the cut piece is offset by model radius × this factor */
+export const KEEP_BOTH_EXPLODE_FRACTION = 0.3;

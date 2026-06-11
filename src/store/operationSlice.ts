@@ -1,14 +1,17 @@
 import * as THREE from 'three';
-import type { SliceItStore } from '../types/store';
+import type { SliceItStore, SliceMode } from '../types/store';
 import { VIEW_CONFIGS } from '../config/viewConfigs';
-import { MAX_UNDO_STATES, LASSO_EXTRUSION_FACTOR } from '../config/constants';
+import { LASSO_EXTRUSION_FACTOR, KEEP_BOTH_EXPLODE_FRACTION } from '../config/constants';
 import { serializeGeometry } from '../utils/workerGeometry';
+import { mergeSliceResults } from '../utils/mergeSliceResults';
 import { getSlicingAPI, terminateSlicingWorker } from '../workers/slicing.api';
+import type { SliceResult } from '../workers/csgUtils';
+import type { BooleanOp, PointCloudTool } from '../workers/slicing.worker';
 import type { SliceCreator } from './storeTypes';
 
 export type OperationSlice = Pick<
   SliceItStore,
-  'operation' | 'executeSlice' | 'cancelSlice'
+  'operation' | 'executeSlice' | 'cancelSlice' | 'sliceMode' | 'setSliceMode'
 >;
 
 export const createOperationSlice: SliceCreator<OperationSlice> = (set, get) => ({
@@ -16,6 +19,18 @@ export const createOperationSlice: SliceCreator<OperationSlice> = (set, get) => 
     isSlicing: false,
     progress: 0,
     statusText: '',
+  },
+
+  sliceMode: 'subtract',
+
+  setSliceMode: (mode: SliceMode) => {
+    set({ sliceMode: mode });
+    const labels: Record<SliceMode, string> = {
+      subtract: 'CUT — remove the tool volume',
+      intersect: 'KEEP — keep only the tool volume',
+      both: 'BOTH — keep both halves (exploded)',
+    };
+    get().addToast('info', `Slice mode: ${labels[mode]}`);
   },
 
   executeSlice: async () => {
@@ -59,103 +74,122 @@ export const createOperationSlice: SliceCreator<OperationSlice> = (set, get) => 
       addLog('Initializing WebWorker for boolean subtraction...');
       await api.init();
 
+      // ── Derive cut parameters (shared by mesh + point-cloud paths) ────
+
+      // Use the stored plane position/normal.
+      // planePosition is updated in real-time by the TransformControls write-back
+      // in CuttingPlane (defaults to [0,0,0] — origin-lock).
+      // planeNormal is derived from the clicked points and updated by rotation.
+      let origin: [number, number, number] = [...tool.planePosition] as [number, number, number];
+      let normal: [number, number, number] = [...tool.planeNormal] as [number, number, number];
+
+      // Plane primitive: its gizmo writes to tool.transform (not
+      // planePosition/planeNormal), so derive the cut from the transform.
+      // The GPU preview (useClippingPlanes) clips away the plane's local
+      // +Y half-space; the worker's half-space cutter removes the −normal
+      // side, so pass the NEGATED local +Y to make the cut match the preview.
+      if (tool.activeTool === 'plane') {
+        const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(...tool.transform.rotation));
+        const n = new THREE.Vector3(0, 1, 0).applyQuaternion(q).normalize();
+        origin = [...tool.transform.position] as [number, number, number];
+        normal = [-n.x, -n.y, -n.z];
+      }
+
+      // If the normal is still at default [0,1,0] but we have 3 points, recompute
+      // from the points as a safety net for cases where updatePlaneNormal wasn't called.
+      const normalIsDefault = normal[0] === 0 && normal[1] === 1 && normal[2] === 0;
+      if (tool.activeTool === 'knife' && normalIsDefault && tool.points.length >= 3) {
+          const p0 = new THREE.Vector3(...tool.points[0]);
+          const p1 = new THREE.Vector3(...tool.points[1]);
+          const p2 = new THREE.Vector3(...tool.points[2]);
+          const v1 = new THREE.Vector3().subVectors(p1, p0).normalize();
+          const v2 = new THREE.Vector3().subVectors(p2, p0).normalize();
+          const n = new THREE.Vector3().crossVectors(v1, v2).normalize();
+          if (n.lengthSq() > 0.0001) {
+              normal = [n.x, n.y, n.z];
+          }
+      }
+
+      // Lasso: extrude polygon along camera depth direction
+      const viewConfig = VIEW_CONFIGS[get().activeViewIndex];
+      const camPos = viewConfig?.position ?? [5, 5, 5];
+      const camLen = Math.sqrt(camPos[0]**2 + camPos[1]**2 + camPos[2]**2);
+      const extrusionDir: [number, number, number] = [
+        camPos[0] / camLen,
+        camPos[1] / camLen,
+        camPos[2] / camLen,
+      ];
+      const modelRadius = model.boundingSphere?.radius ?? 5;
+      // Extrusion depth: punches fully through the model
+      const extrusionDepth = modelRadius * LASSO_EXTRUSION_FACTOR;
+
+      const mode = get().sliceMode;
+
       if (model.type === 'mesh') {
         addLog('Dispatching geometry to worker...');
-
-        // Use the stored plane position/normal.
-        // planePosition is updated in real-time by the TransformControls write-back
-        // in CuttingPlane (defaults to [0,0,0] — origin-lock).
-        // planeNormal is derived from the 3 clicked points and updated by rotation.
-        let origin: [number, number, number] = [...tool.planePosition] as [number, number, number];
-        let normal: [number, number, number] = [...tool.planeNormal] as [number, number, number];
-
-        // Plane primitive: its gizmo writes to tool.transform (not
-        // planePosition/planeNormal), so derive the cut from the transform.
-        // The GPU preview (useClippingPlanes) clips away the plane's local
-        // +Y half-space; the worker's half-space cutter removes the −normal
-        // side, so pass the NEGATED local +Y to make the cut match the preview.
-        if (tool.activeTool === 'plane') {
-          const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(...tool.transform.rotation));
-          const n = new THREE.Vector3(0, 1, 0).applyQuaternion(q).normalize();
-          origin = [...tool.transform.position] as [number, number, number];
-          normal = [-n.x, -n.y, -n.z];
-        }
-
-        // If the normal is still at default [0,1,0] but we have 3 points, recompute
-        // from the points as a safety net for cases where updatePlaneNormal wasn't called.
-        const normalIsDefault = normal[0] === 0 && normal[1] === 1 && normal[2] === 0;
-        if (tool.activeTool === 'knife' && normalIsDefault && tool.points.length >= 3) {
-            const p0 = new THREE.Vector3(...tool.points[0]);
-            const p1 = new THREE.Vector3(...tool.points[1]);
-            const p2 = new THREE.Vector3(...tool.points[2]);
-            const v1 = new THREE.Vector3().subVectors(p1, p0).normalize();
-            const v2 = new THREE.Vector3().subVectors(p2, p0).normalize();
-            const n = new THREE.Vector3().crossVectors(v1, v2).normalize();
-            if (n.lengthSq() > 0.0001) {
-                normal = [n.x, n.y, n.z];
-            }
-        }
-
-        let result;
-
-        // IMPORTANT: copy the typed arrays before sending to the worker.
-        // Comlink may transfer (detach) ArrayBuffers, which would crash the
-        // WebGL renderer by leaving the live geometry with detached buffers.
-        const posCopy = new Float32Array(model.geometry.attributes.position.array as Float32Array);
-        const idxCopy = model.geometry.index
-          ? new Uint32Array(model.geometry.index.array as Uint32Array)
-          : null;
 
         // Texture preservation: pass UVs to the worker when toggle is on
         const preserveTextures = get().ui.preserveTextures;
         const hasUVs = !!(model.geometry.attributes.uv);
-        const uvCopy = (preserveTextures && hasUVs)
-          ? new Float32Array(model.geometry.attributes.uv.array as Float32Array)
-          : null;
-
         if (preserveTextures && hasUVs) {
           addLog('Texture preservation mode: passing UVs to CSG worker.');
         }
 
-        if (tool.activeTool === 'box' || tool.activeTool === 'sphere') {
-            result = await api.subtractMeshWithPrimitive(
-                posCopy,
-                idxCopy,
-                tool.activeTool,
-                tool.transform.position,
-                tool.transform.rotation,
-                tool.transform.scale,
-                uvCopy
+        // Run one boolean op against the source geometry. Fresh typed-array
+        // copies per call: Comlink may transfer (detach) ArrayBuffers, which
+        // would crash the WebGL renderer by leaving the live geometry with
+        // detached buffers.
+        const runOp = async (op: BooleanOp): Promise<SliceResult> => {
+          const posCopy = new Float32Array(sourceGeometry.attributes.position.array as Float32Array);
+          const idxCopy = sourceGeometry.index
+            ? new Uint32Array(sourceGeometry.index.array as Uint32Array)
+            : null;
+          const uvCopy = (preserveTextures && hasUVs)
+            ? new Float32Array(sourceGeometry.attributes.uv.array as Float32Array)
+            : null;
+
+          if (tool.activeTool === 'box' || tool.activeTool === 'sphere') {
+            return api.subtractMeshWithPrimitive(
+              posCopy, idxCopy, tool.activeTool,
+              tool.transform.position, tool.transform.rotation, tool.transform.scale,
+              uvCopy, op
             );
-        } else if (tool.activeTool === 'lasso') {
-            // Lasso: extrude polygon along camera depth direction
+          }
+          if (tool.activeTool === 'lasso') {
             const polyFlat = new Float32Array(tool.points.flat());
-            const viewConfig = VIEW_CONFIGS[get().activeViewIndex];
-            const camPos = viewConfig?.position ?? [5, 5, 5];
-            const camLen = Math.sqrt(camPos[0]**2 + camPos[1]**2 + camPos[2]**2);
-            const extrusionDir: [number, number, number] = [
-              camPos[0] / camLen,
-              camPos[1] / camLen,
-              camPos[2] / camLen,
-            ];
-            // Extrusion depth: punches fully through the model
-            const extrusionDepth = (model.boundingSphere?.radius ?? 5) * LASSO_EXTRUSION_FACTOR;
-            result = await api.subtractMeshWithLasso(
-                posCopy,
-                idxCopy,
-                polyFlat,
-                extrusionDir,
-                extrusionDepth,
-                uvCopy
+            return api.subtractMeshWithLasso(
+              posCopy, idxCopy, polyFlat, extrusionDir, extrusionDepth, uvCopy, op
             );
+          }
+          return api.subtractMeshWithPlane(posCopy, idxCopy, origin, normal, uvCopy, op);
+        };
+
+        let result: SliceResult;
+        if (mode === 'both') {
+          // Two ops: the kept shell and the cut-away piece, offset apart so
+          // the result reads as a cut instead of reassembling seamlessly.
+          const keptHalf = await runOp('subtract');
+          const cutHalf = await runOp('intersect');
+
+          const offsetDir = new THREE.Vector3();
+          if (tool.activeTool === 'knife' || tool.activeTool === 'plane') {
+            offsetDir.set(-normal[0], -normal[1], -normal[2]); // toward removed side
+          } else if (tool.activeTool === 'lasso') {
+            offsetDir.set(...extrusionDir);
+          } else {
+            // Box/sphere: push the piece away from the model center
+            const mc = model.boundingSphere?.center ?? new THREE.Vector3();
+            offsetDir.set(
+              tool.transform.position[0] - mc.x,
+              tool.transform.position[1] - mc.y,
+              tool.transform.position[2] - mc.z
+            );
+            if (offsetDir.lengthSq() < 1e-6) offsetDir.set(0, 1, 0);
+          }
+          offsetDir.normalize().multiplyScalar(modelRadius * KEEP_BOTH_EXPLODE_FRACTION);
+          result = mergeSliceResults(keptHalf, cutHalf, [offsetDir.x, offsetDir.y, offsetDir.z]);
         } else {
-            result = await api.subtractMeshWithPlane(
-                posCopy,
-                idxCopy,
-                origin,
-                normal,
-                uvCopy
-            );
+          result = await runOp(mode);
         }
 
         addLog('Worker completed boolean operation successfully.');
@@ -207,7 +241,7 @@ export const createOperationSlice: SliceCreator<OperationSlice> = (set, get) => 
             // The slice succeeded — only now does the pre-slice snapshot
             // become an undo entry. New geometry also invalidates any redo
             // future.
-            undoStack: [...s.undoStack, preSliceEntry].slice(-MAX_UNDO_STATES),
+            undoStack: [...s.undoStack, preSliceEntry].slice(-s.ui.undoDepth),
             redoStack: [],
         }));
 
@@ -216,9 +250,66 @@ export const createOperationSlice: SliceCreator<OperationSlice> = (set, get) => 
           get().addToast('warning', '⚠️ Textures lost — CSG fallback does not support UV preservation.');
         }
 
-      } else {
-          addLog(`Slicing not yet supported for model type: ${model.type}`);
-          get().addToast('info', `Point cloud slicing coming soon.`);
+      } else if (model.type === 'pointcloud') {
+        addLog('Dispatching point cloud to worker for filtering...');
+
+        // Build the analytic tool description matching the mesh cutters
+        let pcTool: PointCloudTool;
+        if (tool.activeTool === 'box' || tool.activeTool === 'sphere') {
+          pcTool = {
+            kind: tool.activeTool,
+            position: tool.transform.position,
+            rotation: tool.transform.rotation,
+            scale: tool.transform.scale,
+          };
+        } else if (tool.activeTool === 'lasso') {
+          pcTool = {
+            kind: 'lasso',
+            polyPoints: new Float32Array(tool.points.flat()),
+            extrusionDir,
+          };
+        } else {
+          pcTool = { kind: 'plane', origin, normal };
+        }
+
+        // 'both' is meaningless for point filtering — treat it as subtract.
+        const pcOp: BooleanOp = mode === 'intersect' ? 'intersect' : 'subtract';
+        if (mode === 'both') {
+          addLog("Slice mode 'both' is mesh-only — using CUT for point cloud.");
+        }
+
+        const posCopy = new Float32Array(sourceGeometry.attributes.position.array as Float32Array);
+        const filtered = await api.filterPointCloud(posCopy, pcTool, pcOp);
+
+        if (get().model.geometry !== sourceGeometry) {
+          addLog('Filter result discarded: model changed during the operation.');
+          return;
+        }
+
+        if (filtered.length === 0) {
+          get().addToast('warning', 'That cut would remove every point — nothing applied.');
+          addLog('Point filter rejected: empty result.');
+          return;
+        }
+
+        const filteredGeometry = new THREE.BufferGeometry();
+        filteredGeometry.setAttribute('position', new THREE.BufferAttribute(filtered, 3));
+        filteredGeometry.computeBoundingSphere();
+
+        sourceGeometry.dispose();
+
+        set(s => ({
+          model: {
+            ...s.model,
+            geometry: filteredGeometry,
+            boundingSphere: filteredGeometry.boundingSphere,
+            vertexCount: filteredGeometry.attributes.position.count,
+            faceCount: 0,
+          },
+          undoStack: [...s.undoStack, preSliceEntry].slice(-s.ui.undoDepth),
+          redoStack: [],
+        }));
+        addLog(`Point cloud filtered: ${filtered.length / 3} points remain.`);
       }
 
     } catch (error: unknown) {

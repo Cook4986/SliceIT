@@ -1,5 +1,5 @@
 import type { SliceItStore, ToastType } from '../types/store';
-import { MAX_TOASTS, TOAST_DURATION } from '../config/constants';
+import { MAX_TOASTS, TOAST_DURATION, MAX_UNDO_STATES } from '../config/constants';
 import type { SliceCreator } from './storeTypes';
 
 export type UISlice = Pick<
@@ -27,6 +27,7 @@ export const createUISlice: SliceCreator<UISlice> = (set, get) => ({
     showDebugConsole: false,
     showHelp: false,
     preserveTextures: false, // Off by default — 3D print workflow
+    undoDepth: MAX_UNDO_STATES,
   },
 
   addToast: (type: ToastType, message: string) => {

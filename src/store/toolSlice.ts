@@ -3,7 +3,6 @@ import type { SliceItStore, ToolType, TransformMode, ToolTransform, PointsEntry 
 import { VIEW_CONFIGS } from '../config/viewConfigs';
 import {
   DEFAULT_TOOL_TRANSFORM,
-  MAX_UNDO_STATES,
   LASSO_MAX_POINTS,
   LASSO_CLOSE_RADIUS_FRACTION,
 } from '../config/constants';
@@ -196,7 +195,7 @@ export const createToolSlice: SliceCreator<ToolSlice> = (set, get) => ({
           planePosition: derivedPosition,
         },
         // Push snapshot and clear redo (new intent = different future)
-        undoStack: [...s.undoStack, pointsSnapshot].slice(-MAX_UNDO_STATES),
+        undoStack: [...s.undoStack, pointsSnapshot].slice(-s.ui.undoDepth),
         redoStack: [],
       };
     });

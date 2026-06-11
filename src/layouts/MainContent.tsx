@@ -21,7 +21,29 @@ export function MainContent() {
   const containerRef = useRef<HTMLDivElement>(null);
   const activeView = useStore(s => s.activeViewIndex);
   const setActiveView = useStore(s => s.setActiveView);
+  const setUIState = useStore(s => s.setUIState);
   const [mounted, setMounted] = useState(false);
+
+  // Right-click context slice. The original implementation broke
+  // OrbitControls right-drag pan; the fix is to only open the inspector for
+  // a STATIONARY right-click — a right-drag also ends with a contextmenu
+  // event, but its pointer will have travelled.
+  const rightDownPos = useRef<[number, number] | null>(null);
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (e.button === 2) rightDownPos.current = [e.clientX, e.clientY];
+  };
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault(); // suppress the browser menu; OrbitControls unaffected
+    const down = rightDownPos.current;
+    rightDownPos.current = null;
+    if (down && Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
+    setUIState({
+      showFloatingInspector: true,
+      floatingInspectorPos: [e.clientX, e.clientY],
+    });
+  };
 
   // Sync refs array length with layout
   useEffect(() => {
@@ -45,6 +67,8 @@ export function MainContent() {
   return (
     <div
       ref={containerRef}
+      onPointerDown={handlePointerDown}
+      onContextMenu={handleContextMenu}
       style={{
         display: 'flex',
         flex: 1,
@@ -53,10 +77,6 @@ export function MainContent() {
       }}
     >
       {/* HTML Viewport Grid */}
-      {/* Bug 3 fix: onContextMenu removed — it was intercepting right-click
-          across all viewports and disabling OrbitControls rotate/pan.
-          The FloatingInspector is now accessible only via the standalone
-          SliceIT button in the header. */}
       <div 
         className="viewport-grid" 
         style={{ 

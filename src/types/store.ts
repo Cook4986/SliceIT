@@ -12,6 +12,10 @@ export type TransformMode = 'translate' | 'rotate' | 'scale';
 
 export type ExportFormat = 'stl' | 'ply' | 'obj' | 'gltf' | 'glb';
 
+/** What a slice keeps: 'subtract' removes the tool volume, 'intersect'
+ *  keeps only it, 'both' keeps both halves (cut piece offset slightly). */
+export type SliceMode = 'subtract' | 'intersect' | 'both';
+
 export type ToastType = 'success' | 'error' | 'warning' | 'info';
 
 // ============================================================
@@ -170,6 +174,8 @@ export interface UIState {
   /** When true, UVs are preserved through the CSG pipeline and original
    *  materials are attached on export. Off by default (3D-print workflow). */
   preserveTextures: boolean;
+  /** Max geometry/anchor snapshots kept for undo (memory vs. history depth) */
+  undoDepth: number;
 }
 
 // ============================================================
@@ -219,6 +225,8 @@ export interface SliceItStore {
   executeSlice: () => Promise<void>;
   /** Abort an in-flight slice by terminating the CSG worker. */
   cancelSlice: () => void;
+  sliceMode: SliceMode;
+  setSliceMode: (mode: SliceMode) => void;
 
   // --- History Actions ---
   undo: () => void;

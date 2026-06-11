@@ -80,6 +80,8 @@ export function useKeyboardShortcuts() {
       if (key === 'escape') {
         if (store.ui.showHelp) {
           store.setUIState({ showHelp: false });
+        } else if (store.ui.showSettings) {
+          store.setUIState({ showSettings: false });
         } else if (store.ui.showExportModal) {
           store.setUIState({ showExportModal: false });
         } else if (store.tool.isDrawing) {

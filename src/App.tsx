@@ -11,6 +11,7 @@ import { DebugConsole } from './components/DebugConsole';
 import { ExportModal } from './components/ExportModal';
 import { BusyOverlay } from './components/BusyOverlay';
 import { ShortcutHelp } from './components/ShortcutHelp';
+import { SettingsModal } from './components/SettingsModal';
 
 export default function App() {
   const hasModel = useStore(s => s.model.geometry !== null);
@@ -35,6 +36,7 @@ export default function App() {
       <ExportModal />
       <BusyOverlay />
       <ShortcutHelp />
+      <SettingsModal />
     </div>
   );
 }
