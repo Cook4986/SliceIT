@@ -332,6 +332,17 @@ html, body, #root {
   border-top: 4px solid #3B20A1;
 }
 
+.status-bar .github-link {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-muted);
+  transition: color 0.15s ease;
+}
+
+.status-bar .github-link:hover {
+  color: var(--color-accent-cyan);
+}
+
 /* === Empty State === */
 .empty-state {
   display: flex;
