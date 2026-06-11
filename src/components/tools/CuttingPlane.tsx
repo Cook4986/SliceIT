@@ -31,6 +31,7 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
   const planePosition = useStore(s => s.tool.planePosition);
 
   const updatePoint = useStore(s => s.updatePoint);
+  const setToolPoints = useStore(s => s.setToolPoints);
   const setTransformMode = useStore(s => s.setTransformMode);
   const updatePlaneNormal = useStore(s => s.updatePlaneNormal);
   const updatePlanePosition = useStore(s => s.updatePlanePosition);
@@ -295,7 +296,12 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
               isActive={isActive && activeHandleIndex === 'plane'}
               mode={transformMode}
               onClick={() => setActiveHandleIndex('plane')}
-              onTransformChange={(pos: THREE.Vector3) => { updatePlanePosition([pos.x, pos.y, pos.z]); }}
+              onPointsTransform={(pts: THREE.Vector3[]) => {
+                // Write the gizmo-transformed polygon back to the store so the
+                // slice cuts where the preview sits — previously only a visual
+                // move happened and the cut used the original anchor points.
+                setToolPoints(pts.map(p => [p.x, p.y, p.z] as [number, number, number]));
+              }}
             />
           )}
         </group>
@@ -311,12 +317,20 @@ function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick, 
   const { invalidate } = useThree();
   const size = planeSize || 3;
 
+  // Live orientation. The `quaternion` prop is the anchor-derived deploy
+  // orientation and never updates after the gizmo rotates the plane — but
+  // React kept re-applying it on every re-render, visually undoing gizmo
+  // rotation while the slice used the updated planeNormal (preview ≠ cut).
+  // Track the current orientation in state and render mesh + outlines from it.
+  const [liveQuat, setLiveQuat] = useState<THREE.Quaternion>(() => quaternion.clone());
+
   const handleChange = () => {
     if (meshRef.current && onTransformChange) {
       const worldPos = new THREE.Vector3();
       const worldQuat = new THREE.Quaternion();
       meshRef.current.getWorldPosition(worldPos);
       meshRef.current.getWorldQuaternion(worldQuat);
+      setLiveQuat(worldQuat.clone());
       onTransformChange(worldPos, worldQuat);
     }
     invalidate();
@@ -324,7 +338,7 @@ function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick, 
 
   return (
     <group>
-      <mesh ref={meshRef} position={center} quaternion={quaternion}
+      <mesh ref={meshRef} position={center} quaternion={liveQuat}
         onPointerDown={(e) => { e.stopPropagation(); onClick(); }}
       >
         <planeGeometry args={[size, size]} />
@@ -336,11 +350,11 @@ function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick, 
       {/* Full quad outline */}
       <Line
         points={[
-          new THREE.Vector3(-size/2, -size/2, 0).applyQuaternion(quaternion).add(center),
-          new THREE.Vector3( size/2, -size/2, 0).applyQuaternion(quaternion).add(center),
-          new THREE.Vector3( size/2,  size/2, 0).applyQuaternion(quaternion).add(center),
-          new THREE.Vector3(-size/2,  size/2, 0).applyQuaternion(quaternion).add(center),
-          new THREE.Vector3(-size/2, -size/2, 0).applyQuaternion(quaternion).add(center),
+          new THREE.Vector3(-size/2, -size/2, 0).applyQuaternion(liveQuat).add(center),
+          new THREE.Vector3( size/2, -size/2, 0).applyQuaternion(liveQuat).add(center),
+          new THREE.Vector3( size/2,  size/2, 0).applyQuaternion(liveQuat).add(center),
+          new THREE.Vector3(-size/2,  size/2, 0).applyQuaternion(liveQuat).add(center),
+          new THREE.Vector3(-size/2, -size/2, 0).applyQuaternion(liveQuat).add(center),
         ]}
         color={COLORS.accent.pink} lineWidth={1.5} transparent opacity={0.4}
       />
@@ -349,8 +363,8 @@ function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick, 
           part of the plane when viewed edge-on. */}
       <Line
         points={[
-          new THREE.Vector3(-size/2, 0, 0).applyQuaternion(quaternion).add(center),
-          new THREE.Vector3( size/2, 0, 0).applyQuaternion(quaternion).add(center),
+          new THREE.Vector3(-size/2, 0, 0).applyQuaternion(liveQuat).add(center),
+          new THREE.Vector3( size/2, 0, 0).applyQuaternion(liveQuat).add(center),
         ]}
         color={COLORS.accent.cyan} lineWidth={4} transparent opacity={0.9}
         depthWrite={false}
@@ -364,11 +378,22 @@ function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick, 
 
 // ── LassoSurface ──────────────────────────────────────────────────────────────
 
-function LassoSurface({ points, isActive, mode, onClick, onTransformChange }: any) {
+function LassoSurface({ points, isActive, mode, onClick, onPointsTransform }: any) {
   const meshRef = useRef<THREE.Mesh>(null);
   const { invalidate } = useThree();
   const activeViewIndex = useStore(s => s.activeViewIndex);
   const boundingSphere = useStore(s => s.model.boundingSphere);
+
+  // Snapshot of the polygon at deploy time. The gizmo transforms the face
+  // mesh relative to this snapshot, and every change writes the transformed
+  // points back to the store (via onPointsTransform) so the slice always cuts
+  // exactly where the preview sits. Rendering the face from the live store
+  // points instead would double-apply the gizmo transform.
+  const basePointsRef = useRef<THREE.Vector3[]>([]);
+  if (basePointsRef.current.length === 0 && points && points.length > 0) {
+    basePointsRef.current = points.map((p: THREE.Vector3) => p.clone());
+  }
+  const basePoints = basePointsRef.current;
 
   // Extrusion direction = camera depth (toward the scene from the camera)
   const extrusionDir = useMemo(() => {
@@ -381,29 +406,30 @@ function LassoSurface({ points, isActive, mode, onClick, onTransformChange }: an
     return (boundingSphere?.radius ?? 5) * 6;
   }, [boundingSphere]);
 
-  const center = useMemo(() => {
-    if (!points || points.length === 0) return new THREE.Vector3();
+  const baseCenter = useMemo(() => {
     const c = new THREE.Vector3();
-    points.forEach((p: THREE.Vector3) => c.add(p));
-    return c.multiplyScalar(1 / points.length);
-  }, [points]);
+    if (basePoints.length === 0) return c;
+    basePoints.forEach((p: THREE.Vector3) => c.add(p));
+    return c.multiplyScalar(1 / basePoints.length);
+  }, [basePoints]);
 
-  // Front face geometry (flat polygon)
+  // Front face geometry (flat polygon) — built from the deploy-time snapshot;
+  // the mesh's own transform (driven by the gizmo) positions it in the world.
   const faceGeometry = useMemo(() => {
-    if (!points || points.length < 3) return new THREE.BufferGeometry();
+    if (basePoints.length < 3) return new THREE.BufferGeometry();
     const geom = new THREE.BufferGeometry();
     const positions: number[] = [];
-    for (let i = 1; i < points.length - 1; i++) {
+    for (let i = 1; i < basePoints.length - 1; i++) {
       positions.push(
-        points[0].x - center.x, points[0].y - center.y, points[0].z - center.z,
-        points[i].x - center.x, points[i].y - center.y, points[i].z - center.z,
-        points[i+1].x - center.x, points[i+1].y - center.y, points[i+1].z - center.z,
+        basePoints[0].x - baseCenter.x, basePoints[0].y - baseCenter.y, basePoints[0].z - baseCenter.z,
+        basePoints[i].x - baseCenter.x, basePoints[i].y - baseCenter.y, basePoints[i].z - baseCenter.z,
+        basePoints[i+1].x - baseCenter.x, basePoints[i+1].y - baseCenter.y, basePoints[i+1].z - baseCenter.z,
       );
     }
     geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geom.computeVertexNormals();
     return geom;
-  }, [points, center]);
+  }, [basePoints, baseCenter]);
 
   // Polygon outline (thick edges) — front face, closed loop
   const frontEdge = useMemo(() => {
@@ -428,10 +454,20 @@ function LassoSurface({ points, isActive, mode, onClick, onTransformChange }: an
   useEffect(() => { return () => faceGeometry.dispose(); }, [faceGeometry]);
 
   const handleChange = () => {
-    if (meshRef.current && onTransformChange) {
+    if (meshRef.current && onPointsTransform) {
+      // Apply the mesh's full world transform (T·R·S) to the deploy-time
+      // snapshot and push the result to the store — this is what makes the
+      // gizmo actually move the CUT, not just the preview.
       const worldPos = new THREE.Vector3();
+      const worldQuat = new THREE.Quaternion();
+      const worldScale = new THREE.Vector3();
       meshRef.current.getWorldPosition(worldPos);
-      onTransformChange(worldPos);
+      meshRef.current.getWorldQuaternion(worldQuat);
+      meshRef.current.getWorldScale(worldScale);
+      const transformed = basePoints.map((p: THREE.Vector3) =>
+        p.clone().sub(baseCenter).multiply(worldScale).applyQuaternion(worldQuat).add(worldPos)
+      );
+      onPointsTransform(transformed);
     }
     invalidate();
   };
@@ -439,7 +475,7 @@ function LassoSurface({ points, isActive, mode, onClick, onTransformChange }: an
   return (
     <group>
       {/* Front face fill */}
-      <mesh ref={meshRef} geometry={faceGeometry} position={center}
+      <mesh ref={meshRef} geometry={faceGeometry} position={baseCenter}
         onPointerDown={(e) => { e.stopPropagation(); onClick(); }}
       >
         <meshStandardMaterial

@@ -32,13 +32,16 @@ export function exportGeometry(
 
   // Bug 4a fix: ensure geometry is export-ready.
   // Many exporters (GLTFExporter) require UV coordinates to include the mesh
-  // in the scene nodes array. Add a zeroed UV set if none exists.
+  // in the scene nodes array. Add a zeroed UV set if none exists — on a CLONE,
+  // never on the live store geometry (exporting must not mutate app state).
   if (!geometry.attributes.uv) {
-    const posCount = geometry.attributes.position.count;
-    geometry.setAttribute(
+    const cloned = geometry.clone();
+    const posCount = cloned.attributes.position.count;
+    cloned.setAttribute(
       'uv',
       new THREE.Float32BufferAttribute(new Float32Array(posCount * 2), 2)
     );
+    geometry = cloned;
   }
 
   // Resolve the material: use original if texture mode is on and format supports it

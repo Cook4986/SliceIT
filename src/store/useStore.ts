@@ -14,7 +14,7 @@ import { VIEW_CONFIGS } from '../config/viewConfigs';
 import { DEFAULT_TOOL_TRANSFORM, MAX_UNDO_STATES, MAX_TOASTS, TOAST_DURATION } from '../config/constants';
 import { loadModelFile } from '../loaders/loaderFactory';
 import { detectModelType, centerGeometry, normalizeScale } from '../utils/geometryUtils';
-import { serializeGeometry } from '../utils/workerGeometry';
+import { serializeGeometry, deserializeGeometry } from '../utils/workerGeometry';
 import { exportGeometry } from '../exporters/exporterFactory';
 import { getSlicingAPI } from '../workers/slicing.api';
 import { validateFileSize } from '../utils/fileUtils';
@@ -217,6 +217,9 @@ export const useStore = create<SliceItStore>()(
     },
 
     loadPreset: (type: 'box' | 'sphere', remote = false) => {
+      const prevGeometry = get().model.geometry;
+      if (prevGeometry) prevGeometry.dispose();
+
       const geometry = type === 'box' 
         ? new THREE.BoxGeometry(2, 2, 2) 
         : new THREE.SphereGeometry(1.5, 32, 32);
@@ -367,6 +370,10 @@ export const useStore = create<SliceItStore>()(
       });
     },
 
+    setToolPoints: (points: [number, number, number][]) => {
+      set(s => ({ tool: { ...s.tool, points } }));
+    },
+
     addAnchor: (pos: [number, number, number]) => {
       set(s => {
         const { activeTool, placementIndex, points } = s.tool;
@@ -512,6 +519,15 @@ export const useStore = create<SliceItStore>()(
 
     executeSlice: async () => {
       const { model, tool, addLog } = get();
+
+      // Reentrancy guard: Enter / FloatingInspector can fire while a slice is
+      // already running. A second concurrent slice would race the first one's
+      // worker result and corrupt the model.
+      if (get().operation.isSlicing) {
+        addLog('Slicing blocked: a slice is already in progress.');
+        return;
+      }
+
       if (!model.geometry || !tool.activeTool) {
         addLog('Slicing blocked: Missing geometry or active tool.');
         get().addToast('warning', 'Select a tool and load a model first.');
@@ -524,13 +540,20 @@ export const useStore = create<SliceItStore>()(
         get().addToast('warning', 'Finish placing all points first.');
         return;
       }
-      
+
+      // Staleness token: if the model geometry changes while the worker runs
+      // (new import, preset load, undo), the result must be discarded instead
+      // of being applied to the wrong mesh.
+      const sourceGeometry = model.geometry;
+
       try {
         addLog(`Preparing to slice using ${tool.activeTool} tool.`);
-        const currentEntry = serializeGeometry(model.geometry, model.type!);
-        const undoStack = [...get().undoStack, currentEntry].slice(-MAX_UNDO_STATES);
-        set(() => ({ operation: { isSlicing: true, progress: 0, statusText: 'Slicing...' }, undoStack }));
-        
+        // Snapshot now, but only push onto the undo stack once the slice
+        // actually succeeds — failed or unsupported slices should not leave
+        // phantom undo entries.
+        const preSliceEntry = serializeGeometry(model.geometry, model.type!);
+        set(() => ({ operation: { isSlicing: true, progress: 0, statusText: 'Slicing...' } }));
+
         const api = getSlicingAPI();
         addLog('Initializing WebWorker for boolean subtraction...');
         await api.init();
@@ -545,10 +568,22 @@ export const useStore = create<SliceItStore>()(
           let origin: [number, number, number] = [...tool.planePosition] as [number, number, number];
           let normal: [number, number, number] = [...tool.planeNormal] as [number, number, number];
 
+          // Plane primitive: its gizmo writes to tool.transform (not
+          // planePosition/planeNormal), so derive the cut from the transform.
+          // The GPU preview (useClippingPlanes) clips away the plane's local
+          // +Y half-space; the worker's half-space cutter removes the −normal
+          // side, so pass the NEGATED local +Y to make the cut match the preview.
+          if (tool.activeTool === 'plane') {
+            const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(...tool.transform.rotation));
+            const n = new THREE.Vector3(0, 1, 0).applyQuaternion(q).normalize();
+            origin = [...tool.transform.position] as [number, number, number];
+            normal = [-n.x, -n.y, -n.z];
+          }
+
           // If the normal is still at default [0,1,0] but we have 3 points, recompute
           // from the points as a safety net for cases where updatePlaneNormal wasn't called.
           const normalIsDefault = normal[0] === 0 && normal[1] === 1 && normal[2] === 0;
-          if (normalIsDefault && tool.points.length >= 3) {
+          if (tool.activeTool === 'knife' && normalIsDefault && tool.points.length >= 3) {
               const p0 = new THREE.Vector3(...tool.points[0]);
               const p1 = new THREE.Vector3(...tool.points[1]);
               const p2 = new THREE.Vector3(...tool.points[2]);
@@ -624,6 +659,14 @@ export const useStore = create<SliceItStore>()(
 
           addLog('Worker completed boolean operation successfully.');
 
+          // Staleness check: if the model was replaced while the worker ran
+          // (import, preset, undo/redo, clear), this result belongs to a
+          // geometry that no longer exists — discard it.
+          if (get().model.geometry !== sourceGeometry) {
+            addLog('Slice result discarded: model changed during the operation.');
+            return;
+          }
+
           const slicedGeometry = new THREE.BufferGeometry();
           slicedGeometry.setAttribute('position', new THREE.BufferAttribute(result.positions, 3));
           if (result.indices.length > 0) {
@@ -648,6 +691,10 @@ export const useStore = create<SliceItStore>()(
           }
           slicedGeometry.computeBoundingSphere();
 
+          // Free the GPU buffers of the geometry being replaced — without this
+          // every slice leaks the previous mesh.
+          sourceGeometry.dispose();
+
           set(s => ({
               model: {
                   ...s.model,
@@ -655,7 +702,12 @@ export const useStore = create<SliceItStore>()(
                   boundingSphere: slicedGeometry.boundingSphere,
                   vertexCount: slicedGeometry.attributes.position.count,
                   faceCount: result.indices.length > 0 ? result.indices.length / 3 : slicedGeometry.attributes.position.count / 3
-              }
+              },
+              // The slice succeeded — only now does the pre-slice snapshot
+              // become an undo entry. New geometry also invalidates any redo
+              // future.
+              undoStack: [...s.undoStack, preSliceEntry].slice(-MAX_UNDO_STATES),
+              redoStack: [],
           }));
 
           // Warn if UV preservation was requested but CSG fallback stripped them
@@ -721,12 +773,9 @@ export const useStore = create<SliceItStore>()(
       if (!model.geometry) return;
       const currentEntry = serializeGeometry(model.geometry, model.type!);
 
-      const restoredGeometry = new THREE.BufferGeometry();
-      restoredGeometry.setAttribute('position', new THREE.Float32BufferAttribute(previousEntry.positions, 3));
-      if (previousEntry.indices) restoredGeometry.setIndex(new THREE.BufferAttribute(previousEntry.indices, 1));
-      if (previousEntry.normals) restoredGeometry.setAttribute('normal', new THREE.Float32BufferAttribute(previousEntry.normals, 3));
-      else restoredGeometry.computeVertexNormals();
-      restoredGeometry.computeBoundingSphere();
+      // deserializeGeometry restores positions, indices, normals AND UVs —
+      // the previous inline restore dropped UVs, breaking texture mode after undo.
+      const restoredGeometry = deserializeGeometry(previousEntry);
 
       model.geometry.dispose();
 
@@ -779,12 +828,8 @@ export const useStore = create<SliceItStore>()(
       if (!model.geometry) return;
       const currentEntry = serializeGeometry(model.geometry, model.type!);
 
-      const restoredGeometry = new THREE.BufferGeometry();
-      restoredGeometry.setAttribute('position', new THREE.Float32BufferAttribute(nextEntry.positions, 3));
-      if (nextEntry.indices) restoredGeometry.setIndex(new THREE.BufferAttribute(nextEntry.indices, 1));
-      if (nextEntry.normals) restoredGeometry.setAttribute('normal', new THREE.Float32BufferAttribute(nextEntry.normals, 3));
-      else restoredGeometry.computeVertexNormals();
-      restoredGeometry.computeBoundingSphere();
+      // Restores UVs along with positions/indices/normals (see undo).
+      const restoredGeometry = deserializeGeometry(nextEntry);
 
       model.geometry.dispose();
 
