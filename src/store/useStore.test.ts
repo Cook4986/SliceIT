@@ -78,6 +78,27 @@ describe('useStore — tool state', () => {
     // Derived normal must be non-default and unit length
     const [x, y, z] = s.tool.planeNormal;
     expect(Math.hypot(x, y, z)).toBeCloseTo(1, 5);
+    // Deploy must also store the full orientation, consistent with the normal
+    const q = new THREE.Quaternion(...s.tool.planeQuaternion);
+    expect(q.length()).toBeCloseTo(1, 5);
+    const n = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
+    expect(n.x).toBeCloseTo(x, 5);
+    expect(n.y).toBeCloseTo(y, 5);
+    expect(n.z).toBeCloseTo(z, 5);
+  });
+
+  it('updatePlaneOrientation keeps quaternion, position, and normal in lockstep', () => {
+    useStore.getState().setActiveTool('knife');
+    // 90° around X: plane normal (0,0,1) → (0,-1,0)
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);
+    useStore.getState().updatePlaneOrientation([1, 2, 3], [q.x, q.y, q.z, q.w], true);
+
+    const s = useStore.getState();
+    expect(s.tool.planePosition).toEqual([1, 2, 3]);
+    expect(s.tool.planeQuaternion[3]).toBeCloseTo(q.w, 5);
+    expect(s.tool.planeNormal[0]).toBeCloseTo(0, 5);
+    expect(s.tool.planeNormal[1]).toBeCloseTo(-1, 5);
+    expect(s.tool.planeNormal[2]).toBeCloseTo(0, 5);
   });
 
   it('anchor placements are undoable, and cancelDrawing purges point history', () => {

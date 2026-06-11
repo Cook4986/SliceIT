@@ -83,6 +83,12 @@ export interface ToolState {
   planeNormal: [number, number, number];
   /** Position/Center of the cut plane */
   planePosition: [number, number, number];
+  /**
+   * Full orientation of the deployed knife plane as [x, y, z, w].
+   * Source of truth for rendering in EVERY viewport — per-component
+   * orientation state desyncs across the multi-view layout.
+   */
+  planeQuaternion: [number, number, number, number];
   /** -1: not placing, 0+: index of point currently following mouse */
   placementIndex: number;
 }
@@ -217,8 +223,16 @@ export interface SliceItStore {
   /** Replace all tool points at once (used by the lasso gizmo write-back). */
   setToolPoints: (points: [number, number, number][]) => void;
   addAnchor: (pos: [number, number, number]) => void;
-  updatePlaneNormal: (normal: [number, number, number], remote?: boolean) => void;
-  updatePlanePosition: (pos: [number, number, number]) => void;
+  /**
+   * Knife-plane gizmo write-back: updates position, quaternion, and the
+   * derived normal in one atomic set so all viewports and the slice stay
+   * consistent. `remote` suppresses the cross-tab rebroadcast.
+   */
+  updatePlaneOrientation: (
+    position: [number, number, number],
+    quaternion: [number, number, number, number],
+    remote?: boolean
+  ) => void;
   cancelDrawing: () => void;
 
   // --- Slice Actions ---

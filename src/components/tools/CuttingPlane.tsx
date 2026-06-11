@@ -5,6 +5,7 @@ import { useStore } from '../../store/useStore';
 import { MATERIALS, COLORS } from '../../config/theme';
 import { useThree } from '@react-three/fiber';
 import { VIEW_CONFIGS } from '../../config/viewConfigs';
+import { planeBasisQuaternion } from '../../utils/planeBasis';
 
 /**
  * CuttingPlane — Knife & Lasso tool visuals with a 3-stage interactive preview.
@@ -30,11 +31,12 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
   const boundingSphere = useStore(s => s.model.boundingSphere);
   const planePosition = useStore(s => s.tool.planePosition);
 
+  const planeQuaternion = useStore(s => s.tool.planeQuaternion);
+
   const updatePoint = useStore(s => s.updatePoint);
   const setToolPoints = useStore(s => s.setToolPoints);
   const setTransformMode = useStore(s => s.setTransformMode);
-  const updatePlaneNormal = useStore(s => s.updatePlaneNormal);
-  const updatePlanePosition = useStore(s => s.updatePlanePosition);
+  const updatePlaneOrientation = useStore(s => s.updatePlaneOrientation);
 
   const [activeHandleIndex, setActiveHandleIndex] = useState<number | 'plane' | null>(null);
 
@@ -86,53 +88,22 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
   // ISO (3-click): depth derived from P3 position. When P3≈P2 (cursor
   //   hasn't moved yet), falls back to camera direction for the initial preview.
   const quaternion = useMemo(() => {
-    if (vectorPoints.length < 2) return new THREE.Quaternion();
-
-    // Edge = P1→P2 (always the visible edge, regardless of viewport)
-    const p0 = vectorPoints[0];
-    const p1 = vectorPoints[1];
-    const edge = new THREE.Vector3().subVectors(p1, p0).normalize();
-    if (edge.lengthSq() < 1e-8) return new THREE.Quaternion();
-
-    let normal: THREE.Vector3;
-
-    if (isOrthoView) {
-      // Ortho: camera direction is fixed from config
-      const viewDir = new THREE.Vector3(
-        ...VIEW_CONFIGS[activeViewIndex].position
-      ).normalize();
-      normal = new THREE.Vector3().crossVectors(edge, viewDir).normalize();
-    } else {
-      // ISO/Perspective: P3 tilts the plane around the edge axis
-      if (vectorPoints.length >= 3) {
-        const p2 = vectorPoints[2];
-        const v2 = new THREE.Vector3().subVectors(p2, p0).normalize();
-        normal = new THREE.Vector3().crossVectors(edge, v2).normalize();
-
-        // When P3 ≈ P2 (cursor hasn't moved from click 2), the cross product
-        // is degenerate. Fall back to camera-derived normal.
-        if (normal.lengthSq() < 0.0001) {
-          const camDir = new THREE.Vector3(
-            ...VIEW_CONFIGS[activeViewIndex].position
-          ).normalize();
-          normal = new THREE.Vector3().crossVectors(edge, camDir).normalize();
-        }
-      } else {
-        // Only 2 points (shouldn't reach here for ISO, but safe fallback)
-        const camDir = new THREE.Vector3(
-          ...VIEW_CONFIGS[activeViewIndex].position
-        ).normalize();
-        normal = new THREE.Vector3().crossVectors(edge, camDir).normalize();
-      }
-    }
-
-    if (normal.lengthSq() < 0.0001) return new THREE.Quaternion();
-
-    // Build orthonormal basis: edge (X), depth (Y), normal (Z)
-    const depth = new THREE.Vector3().crossVectors(normal, edge).normalize();
-    const m = new THREE.Matrix4().makeBasis(edge, depth, normal);
-    return new THREE.Quaternion().setFromRotationMatrix(m);
+    return (
+      planeBasisQuaternion(
+        vectorPoints,
+        isOrthoView,
+        VIEW_CONFIGS[activeViewIndex].position
+      ) ?? new THREE.Quaternion()
+    );
   }, [vectorPoints, isOrthoView, activeViewIndex]);
+
+  // Deployed-plane orientation comes from the STORE, not local state: every
+  // viewport renders its own CuttingPlane instance, so component-local
+  // orientation desyncs the moment the gizmo rotates the plane in one view.
+  const deployedQuaternion = useMemo(
+    () => new THREE.Quaternion(...planeQuaternion),
+    [planeQuaternion]
+  );
 
   // ── Preview computations ───────────────────────────────────────────────────
 
@@ -279,15 +250,16 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
           {activeTool === 'knife' ? (
             <PlaneSurface
               center={new THREE.Vector3(...planePosition)}
-              quaternion={quaternion}
+              quaternion={deployedQuaternion}
               isActive={isActive && activeHandleIndex === 'plane'}
               mode={transformMode}
               planeSize={deployedSize}
               onClick={() => setActiveHandleIndex('plane')}
               onTransformChange={(pos: THREE.Vector3, quat: THREE.Quaternion) => {
-                updatePlanePosition([pos.x, pos.y, pos.z]);
-                const n = new THREE.Vector3(0, 0, 1).applyQuaternion(quat).normalize();
-                updatePlaneNormal([n.x, n.y, n.z]);
+                updatePlaneOrientation(
+                  [pos.x, pos.y, pos.z],
+                  [quat.x, quat.y, quat.z, quat.w]
+                );
               }}
             />
           ) : (
@@ -317,20 +289,16 @@ function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick, 
   const { invalidate } = useThree();
   const size = planeSize || 3;
 
-  // Live orientation. The `quaternion` prop is the anchor-derived deploy
-  // orientation and never updates after the gizmo rotates the plane — but
-  // React kept re-applying it on every re-render, visually undoing gizmo
-  // rotation while the slice used the updated planeNormal (preview ≠ cut).
-  // Track the current orientation in state and render mesh + outlines from it.
-  const [liveQuat, setLiveQuat] = useState<THREE.Quaternion>(() => quaternion.clone());
-
+  // Orientation is store-driven: the `quaternion` prop tracks
+  // tool.planeQuaternion, which the gizmo writes back on every change.
+  // Re-applying it on re-render is therefore idempotent during drags and
+  // keeps every viewport's instance (and the actual cut) in lockstep.
   const handleChange = () => {
     if (meshRef.current && onTransformChange) {
       const worldPos = new THREE.Vector3();
       const worldQuat = new THREE.Quaternion();
       meshRef.current.getWorldPosition(worldPos);
       meshRef.current.getWorldQuaternion(worldQuat);
-      setLiveQuat(worldQuat.clone());
       onTransformChange(worldPos, worldQuat);
     }
     invalidate();
@@ -338,7 +306,7 @@ function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick, 
 
   return (
     <group>
-      <mesh ref={meshRef} position={center} quaternion={liveQuat}
+      <mesh ref={meshRef} position={center} quaternion={quaternion}
         onPointerDown={(e) => { e.stopPropagation(); onClick(); }}
       >
         <planeGeometry args={[size, size]} />
@@ -350,11 +318,11 @@ function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick, 
       {/* Full quad outline */}
       <Line
         points={[
-          new THREE.Vector3(-size/2, -size/2, 0).applyQuaternion(liveQuat).add(center),
-          new THREE.Vector3( size/2, -size/2, 0).applyQuaternion(liveQuat).add(center),
-          new THREE.Vector3( size/2,  size/2, 0).applyQuaternion(liveQuat).add(center),
-          new THREE.Vector3(-size/2,  size/2, 0).applyQuaternion(liveQuat).add(center),
-          new THREE.Vector3(-size/2, -size/2, 0).applyQuaternion(liveQuat).add(center),
+          new THREE.Vector3(-size/2, -size/2, 0).applyQuaternion(quaternion).add(center),
+          new THREE.Vector3( size/2, -size/2, 0).applyQuaternion(quaternion).add(center),
+          new THREE.Vector3( size/2,  size/2, 0).applyQuaternion(quaternion).add(center),
+          new THREE.Vector3(-size/2,  size/2, 0).applyQuaternion(quaternion).add(center),
+          new THREE.Vector3(-size/2, -size/2, 0).applyQuaternion(quaternion).add(center),
         ]}
         color={COLORS.accent.pink} lineWidth={1.5} transparent opacity={0.4}
       />
@@ -363,8 +331,8 @@ function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick, 
           part of the plane when viewed edge-on. */}
       <Line
         points={[
-          new THREE.Vector3(-size/2, 0, 0).applyQuaternion(liveQuat).add(center),
-          new THREE.Vector3( size/2, 0, 0).applyQuaternion(liveQuat).add(center),
+          new THREE.Vector3(-size/2, 0, 0).applyQuaternion(quaternion).add(center),
+          new THREE.Vector3( size/2, 0, 0).applyQuaternion(quaternion).add(center),
         ]}
         color={COLORS.accent.cyan} lineWidth={4} transparent opacity={0.9}
         depthWrite={false}
@@ -384,16 +352,27 @@ function LassoSurface({ points, isActive, mode, onClick, onPointsTransform }: an
   const activeViewIndex = useStore(s => s.activeViewIndex);
   const boundingSphere = useStore(s => s.model.boundingSphere);
 
-  // Snapshot of the polygon at deploy time. The gizmo transforms the face
-  // mesh relative to this snapshot, and every change writes the transformed
-  // points back to the store (via onPointsTransform) so the slice always cuts
-  // exactly where the preview sits. Rendering the face from the live store
-  // points instead would double-apply the gizmo transform.
-  const basePointsRef = useRef<THREE.Vector3[]>([]);
-  if (basePointsRef.current.length === 0 && points && points.length > 0) {
-    basePointsRef.current = points.map((p: THREE.Vector3) => p.clone());
-  }
-  const basePoints = basePointsRef.current;
+  // Snapshot of the polygon the gizmo transforms against. While THIS
+  // instance is dragging, the mesh transform is applied to the snapshot and
+  // the result is written to the store. Whenever the instance is NOT
+  // dragging (other viewports during a drag, drag end, undo, cross-tab
+  // sync), the snapshot is rebuilt from the live store points and the mesh
+  // transform is reset to identity. Without this, each viewport's stale
+  // snapshot would clobber the store the moment its gizmo was touched —
+  // reverting the user's placement to the deploy position.
+  const [basePoints, setBasePoints] = useState<THREE.Vector3[]>(
+    () => (points ?? []).map((p: THREE.Vector3) => p.clone())
+  );
+  const draggingRef = useRef(false);
+
+  useEffect(() => {
+    if (draggingRef.current) return;
+    setBasePoints((points ?? []).map((p: THREE.Vector3) => p.clone()));
+    if (meshRef.current) {
+      meshRef.current.quaternion.identity();
+      meshRef.current.scale.set(1, 1, 1);
+    }
+  }, [points, isActive]);
 
   // Extrusion direction = camera depth (toward the scene from the camera)
   const extrusionDir = useMemo(() => {
@@ -455,9 +434,9 @@ function LassoSurface({ points, isActive, mode, onClick, onPointsTransform }: an
 
   const handleChange = () => {
     if (meshRef.current && onPointsTransform) {
-      // Apply the mesh's full world transform (T·R·S) to the deploy-time
-      // snapshot and push the result to the store — this is what makes the
-      // gizmo actually move the CUT, not just the preview.
+      // Apply the mesh's full world transform (T·R·S) to the snapshot and
+      // push the result to the store — this is what makes the gizmo actually
+      // move the CUT, not just the preview.
       const worldPos = new THREE.Vector3();
       const worldQuat = new THREE.Quaternion();
       const worldScale = new THREE.Vector3();
@@ -470,6 +449,19 @@ function LassoSurface({ points, isActive, mode, onClick, onPointsTransform }: an
       onPointsTransform(transformed);
     }
     invalidate();
+  };
+
+  const handleDragStart = () => { draggingRef.current = true; };
+  const handleDragEnd = () => {
+    draggingRef.current = false;
+    // Bake the finished drag: snapshot the current (transformed) store
+    // points and zero the mesh transform so the next drag composes from
+    // where the polygon now sits.
+    setBasePoints((points ?? []).map((p: THREE.Vector3) => p.clone()));
+    if (meshRef.current) {
+      meshRef.current.quaternion.identity();
+      meshRef.current.scale.set(1, 1, 1);
+    }
   };
 
   return (
@@ -515,7 +507,13 @@ function LassoSurface({ points, isActive, mode, onClick, onPointsTransform }: an
       ))}
 
       {isActive && meshRef.current && (
-        <TransformControls object={meshRef.current} mode={mode} onObjectChange={handleChange} />
+        <TransformControls
+          object={meshRef.current}
+          mode={mode}
+          onObjectChange={handleChange}
+          onMouseDown={handleDragStart}
+          onMouseUp={handleDragEnd}
+        />
       )}
     </group>
   );

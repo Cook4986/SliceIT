@@ -96,7 +96,7 @@ export const createOperationSlice: SliceCreator<OperationSlice> = (set, get) => 
       }
 
       // If the normal is still at default [0,1,0] but we have 3 points, recompute
-      // from the points as a safety net for cases where updatePlaneNormal wasn't called.
+      // from the points as a safety net for cases where updatePlaneOrientation wasn't called.
       const normalIsDefault = normal[0] === 0 && normal[1] === 1 && normal[2] === 0;
       if (tool.activeTool === 'knife' && normalIsDefault && tool.points.length >= 3) {
           const p0 = new THREE.Vector3(...tool.points[0]);

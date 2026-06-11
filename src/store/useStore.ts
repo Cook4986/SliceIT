@@ -45,6 +45,12 @@ const isVec3 = (v: unknown): v is [number, number, number] =>
   v.length === 3 &&
   v.every(n => typeof n === 'number' && Number.isFinite(n));
 
+/** Validate that a value is a finite [x, y, z, w] quaternion tuple. */
+const isQuat = (v: unknown): v is [number, number, number, number] =>
+  Array.isArray(v) &&
+  v.length === 4 &&
+  v.every(n => typeof n === 'number' && Number.isFinite(n));
+
 // BroadcastChannel messages arrive from OTHER same-origin tabs — they must be
 // treated as untrusted input. Every field is validated before being applied;
 // a malformed message (wrong shape, out-of-range view index, NaN coordinates)
@@ -78,8 +84,10 @@ syncChannel.onmessage = (event) => {
           store.loadPreset(data.presetType, true);
         }
         break;
-      case 'KNIFE_NORMAL_SYNC':
-        if (isVec3(data.normal)) store.updatePlaneNormal(data.normal, true);
+      case 'KNIFE_ORIENT_SYNC':
+        if (isVec3(data.position) && isQuat(data.quaternion)) {
+          store.updatePlaneOrientation(data.position, data.quaternion, true);
+        }
         break;
     }
   } catch {

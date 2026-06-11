@@ -7,6 +7,7 @@ import {
   LASSO_CLOSE_RADIUS_FRACTION,
 } from '../config/constants';
 import { syncChannel } from './syncChannel';
+import { planeBasisQuaternion } from '../utils/planeBasis';
 import type { SliceCreator } from './storeTypes';
 
 /** Pristine tool state — used at startup and after every model change. */
@@ -19,6 +20,7 @@ export const freshToolState = (): SliceItStore['tool'] => ({
   points: [],
   planeNormal: [0, 1, 0],
   planePosition: [0, 0, 0],
+  planeQuaternion: [0, 0, 0, 1],
   placementIndex: -1,
 });
 
@@ -31,8 +33,7 @@ export type ToolSlice = Pick<
   | 'updatePoint'
   | 'setToolPoints'
   | 'addAnchor'
-  | 'updatePlaneNormal'
-  | 'updatePlanePosition'
+  | 'updatePlaneOrientation'
   | 'cancelDrawing'
 >;
 
@@ -56,6 +57,7 @@ export const createToolSlice: SliceCreator<ToolSlice> = (set, get) => ({
         transform: { ...DEFAULT_TOOL_TRANSFORM },
         planeNormal: [0, 1, 0],
         planePosition: [0, 0, 0],
+        planeQuaternion: [0, 0, 0, 1],
       },
       // Clear stale point-placement history when the tool changes so geometry
       // undo/redo history is not polluted with orphaned entries.
@@ -152,28 +154,20 @@ export const createToolSlice: SliceCreator<ToolSlice> = (set, get) => ({
 
       let derivedNormal: [number, number, number] = s.tool.planeNormal;
       let derivedPosition: [number, number, number] = s.tool.planePosition;
+      let derivedQuaternion: [number, number, number, number] = s.tool.planeQuaternion;
 
       if (isDrawingComplete && activeTool === 'knife') {
-          const p0 = new THREE.Vector3(...newPoints[0]);
-          const p1 = new THREE.Vector3(...newPoints[1]);
-
-          if (isOrthoView) {
-              // Ortho 2-click: P1→P2 defines an EDGE of the cutting plane.
-              // The plane contains that line and extends in the camera depth
-              // direction. Normal = cross(edge, viewDir).
-              const edge = new THREE.Vector3().subVectors(p1, p0).normalize();
-              const viewDir = new THREE.Vector3(
-                ...VIEW_CONFIGS[s.activeViewIndex].position
-              ).normalize();
-              const n = new THREE.Vector3().crossVectors(edge, viewDir).normalize();
-              if (n.lengthSq() > 0.0001) derivedNormal = [n.x, n.y, n.z];
-          } else {
-              // Perspective 3-click: normal = cross product of two edge vectors
-              const p2 = new THREE.Vector3(...newPoints[2]);
-              const v1 = new THREE.Vector3().subVectors(p1, p0).normalize();
-              const v2 = new THREE.Vector3().subVectors(p2, p0).normalize();
-              const n = new THREE.Vector3().crossVectors(v1, v2).normalize();
-              if (n.lengthSq() > 0.0001) derivedNormal = [n.x, n.y, n.z];
+          // Same basis math as the CuttingPlane preview — the deployed plane
+          // must land exactly where the preview showed it.
+          const q = planeBasisQuaternion(
+            newPoints.map(p => new THREE.Vector3(...p)),
+            isOrthoView,
+            VIEW_CONFIGS[s.activeViewIndex].position
+          );
+          if (q) {
+            derivedQuaternion = [q.x, q.y, q.z, q.w];
+            const n = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
+            derivedNormal = [n.x, n.y, n.z];
           }
 
           // Position: always at the model's geometric center.
@@ -193,6 +187,7 @@ export const createToolSlice: SliceCreator<ToolSlice> = (set, get) => ({
           isDrawing: !isDrawingComplete,
           planeNormal: derivedNormal,
           planePosition: derivedPosition,
+          planeQuaternion: derivedQuaternion,
         },
         // Push snapshot and clear redo (new intent = different future)
         undoStack: [...s.undoStack, pointsSnapshot].slice(-s.ui.undoDepth),
@@ -201,13 +196,22 @@ export const createToolSlice: SliceCreator<ToolSlice> = (set, get) => ({
     });
   },
 
-  updatePlaneNormal: (normal: [number, number, number], remote = false) => {
-    set(s => ({ tool: { ...s.tool, planeNormal: normal } }));
-    if (!remote) syncChannel.postMessage({ type: 'KNIFE_NORMAL_SYNC', normal });
-  },
-
-  updatePlanePosition: (pos: [number, number, number]) => {
-    set(s => ({ tool: { ...s.tool, planePosition: pos } }));
+  updatePlaneOrientation: (
+    position: [number, number, number],
+    quaternion: [number, number, number, number],
+    remote = false
+  ) => {
+    const q = new THREE.Quaternion(...quaternion);
+    const n = new THREE.Vector3(0, 0, 1).applyQuaternion(q).normalize();
+    set(s => ({
+      tool: {
+        ...s.tool,
+        planePosition: position,
+        planeQuaternion: quaternion,
+        planeNormal: [n.x, n.y, n.z],
+      },
+    }));
+    if (!remote) syncChannel.postMessage({ type: 'KNIFE_ORIENT_SYNC', position, quaternion });
   },
 
   cancelDrawing: () => {
