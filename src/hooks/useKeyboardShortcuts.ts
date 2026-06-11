@@ -33,6 +33,13 @@ export function useKeyboardShortcuts() {
       // Skip if modifier keys are pressed (except for the above)
       if (ctrl || e.altKey) return;
 
+      // ? — Toggle shortcut help overlay
+      if (e.key === '?') {
+        e.preventDefault();
+        store.setUIState({ showHelp: !store.ui.showHelp });
+        return;
+      }
+
       // Tool shortcuts
       const toolMap: Record<string, ToolType> = {
         b: 'box',
@@ -69,9 +76,13 @@ export function useKeyboardShortcuts() {
         return;
       }
 
-      // Escape — Cancel drawing / deselect tool
+      // Escape — close overlays first, then cancel drawing / deselect tool
       if (key === 'escape') {
-        if (store.tool.isDrawing) {
+        if (store.ui.showHelp) {
+          store.setUIState({ showHelp: false });
+        } else if (store.ui.showExportModal) {
+          store.setUIState({ showExportModal: false });
+        } else if (store.tool.isDrawing) {
           store.cancelDrawing();
         } else {
           store.setActiveTool(null);

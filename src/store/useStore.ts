@@ -16,7 +16,7 @@ import { loadModelFile } from '../loaders/loaderFactory';
 import { detectModelType, centerGeometry, normalizeScale } from '../utils/geometryUtils';
 import { serializeGeometry, deserializeGeometry } from '../utils/workerGeometry';
 import { exportGeometry } from '../exporters/exporterFactory';
-import { getSlicingAPI } from '../workers/slicing.api';
+import { getSlicingAPI, terminateSlicingWorker } from '../workers/slicing.api';
 import { validateFileSize } from '../utils/fileUtils';
 
 // ============================================================
@@ -81,6 +81,7 @@ export const useStore = create<SliceItStore>()(
       showFloatingInspector: false,
       floatingInspectorPos: [0, 0],
       showDebugConsole: false, // For hotkey overlay
+      showHelp: false,
       preserveTextures: false, // Off by default — 3D print workflow
     },
 
@@ -738,6 +739,19 @@ export const useStore = create<SliceItStore>()(
         addLog('Unlocking Slice button state.');
         set({ operation: { isSlicing: false, progress: 100, statusText: '' } });
       }
+    },
+
+    cancelSlice: () => {
+      if (!get().operation.isSlicing) return;
+      // Terminating the worker is the only way to abort a WASM boolean op
+      // mid-flight. The orphaned Comlink promise never settles, so the
+      // in-progress executeSlice call simply never resumes — its staleness
+      // and reentrancy guards make that safe. The next slice lazily spawns
+      // a fresh worker.
+      terminateSlicingWorker();
+      set({ operation: { isSlicing: false, progress: 0, statusText: '' } });
+      get().addLog('Slice cancelled — worker terminated.');
+      get().addToast('info', 'Slice cancelled.');
     },
 
     // === History Actions ===

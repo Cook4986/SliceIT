@@ -169,6 +169,8 @@ export interface UIState {
   showExportModal: boolean;
   showSettings: boolean;
   showDebugConsole: boolean;
+  /** '?' keyboard-shortcut reference overlay */
+  showHelp: boolean;
   /** When true, UVs are preserved through the CSG pipeline and original
    *  materials are attached on export. Off by default (3D-print workflow). */
   preserveTextures: boolean;
@@ -222,6 +224,8 @@ export interface SliceItStore {
 
   // --- Slice Actions ---
   executeSlice: () => Promise<void>;
+  /** Abort an in-flight slice by terminating the CSG worker. */
+  cancelSlice: () => void;
 
   // --- History Actions ---
   undo: () => void;

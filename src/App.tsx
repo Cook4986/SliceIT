@@ -9,6 +9,8 @@ import { StatusBar } from './components/StatusBar';
 import { FloatingInspector } from './components/FloatingInspector';
 import { DebugConsole } from './components/DebugConsole';
 import { ExportModal } from './components/ExportModal';
+import { BusyOverlay } from './components/BusyOverlay';
+import { ShortcutHelp } from './components/ShortcutHelp';
 
 export default function App() {
   const hasModel = useStore(s => s.model.geometry !== null);
@@ -31,6 +33,8 @@ export default function App() {
       <FloatingInspector />
       <DebugConsole />
       <ExportModal />
+      <BusyOverlay />
+      <ShortcutHelp />
     </div>
   );
 }

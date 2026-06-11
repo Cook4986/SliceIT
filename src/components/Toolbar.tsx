@@ -48,18 +48,20 @@ export function Toolbar() {
       />
       <button
         className="tool-btn btn-load"
-        title="Load It!"
+        title="Load It! — import a 3D model"
+        aria-label="Load a 3D model"
         onClick={() => fileInputRef.current?.click()}
       >
-        <span style={{ fontSize: '20px' }}>📂</span>
+        <span style={{ fontSize: '20px' }} aria-hidden="true">📂</span>
       </button>
       <button
         className="tool-btn btn-save"
-        title="Save It!"
+        title="Save It! — export the model"
+        aria-label="Export the model"
         disabled={!hasModel}
         onClick={() => setUIState({ showExportModal: true })}
       >
-        <span style={{ fontSize: '20px' }}>💾</span>
+        <span style={{ fontSize: '20px' }} aria-hidden="true">💾</span>
       </button>
 
       <div className="tool-separator" />
@@ -69,10 +71,12 @@ export function Toolbar() {
           key={t.type}
           className={`tool-btn ${activeTool === t.type ? 'active' : ''}`}
           title={`${t.label} (${t.shortcut})`}
+          aria-label={`${t.label} tool`}
+          aria-pressed={activeTool === t.type}
           disabled={!hasModel}
           onClick={() => setActiveTool(activeTool === t.type ? null : t.type)}
         >
-          <span style={{ fontSize: '22px' }}>{t.icon}</span>
+          <span style={{ fontSize: '22px' }} aria-hidden="true">{t.icon}</span>
         </button>
       ))}
 
@@ -90,19 +94,21 @@ export function Toolbar() {
 
       <button
         className="tool-btn"
-        title="Reverse It!"
+        title="Reverse It! (⌘Z)"
+        aria-label="Undo"
         disabled={undoCount === 0}
         onClick={() => undo()}
       >
-        <span style={{ fontSize: '20px' }}>↩️</span>
+        <span style={{ fontSize: '20px' }} aria-hidden="true">↩️</span>
       </button>
       <button
         className="tool-btn"
-        title="Repeat It!"
+        title="Repeat It! (⌘⇧Z)"
+        aria-label="Redo"
         disabled={redoCount === 0}
         onClick={() => redo()}
       >
-        <span style={{ fontSize: '20px' }}>↪️</span>
+        <span style={{ fontSize: '20px' }} aria-hidden="true">↪️</span>
       </button>
 
       <div className="tool-separator" />
@@ -113,9 +119,11 @@ export function Toolbar() {
         title={preserveTextures
           ? 'Texture Preservation ON — UVs carried through cuts (click to disable)'
           : 'Texture Preservation OFF — geometry-only mode for 3D printing (click to enable)'}
+        aria-label="Toggle texture preservation"
+        aria-pressed={preserveTextures}
         onClick={() => togglePreserveTextures()}
       >
-        <span style={{ fontSize: '18px' }}>{preserveTextures ? '🎨' : '🖤'}</span>
+        <span style={{ fontSize: '18px' }} aria-hidden="true">{preserveTextures ? '🎨' : '🖤'}</span>
       </button>
       {preserveTextures && hasOriginalMaterial && (
         <span className="texture-indicator">TEX</span>

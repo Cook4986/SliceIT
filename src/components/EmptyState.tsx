@@ -30,7 +30,11 @@ export function EmptyState() {
           LOAD IT!
         </h2>
         <p style={{ color: 'rgba(255,255,255,0.7)', textAlign: 'center', maxWidth: '300px', fontSize: '12px' }}>
-          DROP AN STL, OBJ, OR GLB FILE HERE TO START SLICING!
+          DROP A FILE HERE TO START SLICING!
+          <br />
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '1px' }}>
+            {SUPPORTED_IMPORT_FORMATS.join(' · ').toUpperCase()}
+          </span>
         </p>
         
         <input
@@ -44,12 +48,13 @@ export function EmptyState() {
       </div>
 
       <div style={{ display: 'flex', gap: '16px', marginTop: '32px' }}>
+        {/* Preset names match the toolbar: Cube It = box, Bop It = sphere */}
         <button 
           className="preset-btn"
           style={{ background: 'var(--color-accent-cyan)' }}
           onClick={() => useStore.getState().loadPreset('box')}
         >
-          Bop It! (Box)
+          Cube It! (Box)
         </button>
       </div>
 

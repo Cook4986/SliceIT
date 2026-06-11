@@ -29,8 +29,14 @@ export function ExportModal() {
 
   return (
     <div className="modal-overlay" onClick={() => setUIState({ showExportModal: false })}>
-      <div className="modal-content bop-it-border" onClick={(e) => e.stopPropagation()}>
-        <h2 className="modal-title" style={{ fontFamily: 'var(--font-heading)', color: 'var(--color-accent-pink)' }}>
+      <div
+        className="modal-content bop-it-border"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="export-modal-title"
+      >
+        <h2 id="export-modal-title" className="modal-title" style={{ fontFamily: 'var(--font-heading)', color: 'var(--color-accent-pink)' }}>
           SAVE IT!
         </h2>
         <p className="modal-subtitle" style={{ color: 'var(--color-text-secondary)', marginBottom: '12px' }}>
