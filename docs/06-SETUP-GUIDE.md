@@ -280,8 +280,8 @@ npx -y vercel link
 
 | Trigger | Branch | Environment | URL |
 |---|---|---|---|
-| Push to `main` | `main` | Production | `sliceit.vercel.app` |
-| Push to `dev` | `dev` | Preview | `sliceit-dev.vercel.app` |
+| Push to `main` | `main` | Production | [`slice-it-chi.vercel.app`](https://slice-it-chi.vercel.app) |
+| Push to `dev` | `dev` | Preview | Auto-generated URL |
 | Pull Request | `feature/*` | Preview | Auto-generated URL |
 
 ---
