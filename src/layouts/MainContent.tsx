@@ -124,6 +124,7 @@ export function MainContent() {
                   viewIndex={layout.indices[i]} 
                   config={config} 
                   isActive={activeView === layout.indices[i]} 
+                  trackEl={ref}
                 />
               </View>
             );

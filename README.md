@@ -57,7 +57,9 @@ Scalable spherical subtractions for rounded craters and hollows.
 ![Bop It](Bop%20It.png)
 
 ### 🛹 Plane It (Plane) — `P`
-A free-floating cutting plane with move/rotate gizmos — no clicks on the model required. The GPU preview shows exactly which side will be removed.
+A free-floating cutting plane with move/rotate gizmos — no clicks on the model required. Semi-transparent arrows mark which side will be cropped, and the GPU preview shows exactly which side will be removed.
+
+![Plane It](Plane%20It.png)
 
 ### Transform Controls
 

@@ -10,9 +10,10 @@ interface ViewSceneProps {
   viewIndex: number;
   config: ViewConfig;
   isActive: boolean;
+  trackEl: HTMLElement | null;
 }
 
-export function ViewScene({ viewIndex, config, isActive }: ViewSceneProps) {
+export function ViewScene({ viewIndex, config, isActive, trackEl }: ViewSceneProps) {
   return (
     <>
       <ViewCamera config={config} viewIndex={viewIndex} />
@@ -20,7 +21,7 @@ export function ViewScene({ viewIndex, config, isActive }: ViewSceneProps) {
       <ModelRenderer />
       <CuttingTool isActive={isActive} />
       <CuttingPlane isActive={isActive} />
-      <PointerTracker isActive={isActive} />
+      <PointerTracker isActive={isActive} trackEl={trackEl} />
       <PointerRenderer />
 
       {/* Strong "Bop It" lighting — bright, toy-like feel */}
