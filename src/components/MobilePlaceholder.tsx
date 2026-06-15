@@ -42,18 +42,12 @@ export function MobilePlaceholder() {
           BEST SLICED ON DESKTOP
         </h1>
 
-        <p className="mobile-gate-body">
-          Slice It! is a precision 3D workshop — it needs a big screen and a mouse
-          to line up cuts across multiple views. Pop open this link on your
-          computer to start slicing!
-        </p>
-
         <button className="mobile-gate-btn" onClick={handleCopyLink}>
           {copied ? '✓ LINK COPIED!' : '🔗 COPY LINK FOR DESKTOP'}
         </button>
 
         <p className="mobile-gate-hint">
-          Load it · Bop it · Slice it
+          Load it · Slice it · Save it
         </p>
 
         <a

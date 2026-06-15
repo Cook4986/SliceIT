@@ -470,14 +470,6 @@ html, body, #root {
   margin: 2px 0;
 }
 
-.mobile-gate-body {
-  font-family: var(--font-ui);
-  font-weight: 600;
-  font-size: 14px;
-  line-height: 1.45;
-  color: var(--color-text-secondary);
-}
-
 .mobile-gate-btn {
   margin-top: 6px;
   font-family: var(--font-logo);
