@@ -198,9 +198,20 @@ export function ViewCamera({ config, viewIndex }: ViewCameraProps) {
                 // Always consume the click when a drawing tool is active
                 e.stopPropagation();
                 if (state.tool.placementIndex !== -1) {
-                    // Use the intersection point directly from the R3F event.
-                    // sharedPointer may be stale if this viewport wasn't active yet.
-                    const pt: [number, number, number] = [e.point.x, e.point.y, e.point.z];
+                    // Lock exactly what the user is previewing: the live follower
+                    // point at placementIndex. Using the viewport-plane event
+                    // intersection (e.point) can differ in depth from the live
+                    // preview raycast point, which causes a visible rotation snap
+                    // on the final click when the knife plane is deployed.
+                    const idx = state.tool.placementIndex;
+                    const followerPt = state.tool.points[idx];
+                    const shared = state.sharedPointer;
+                    const pt: [number, number, number] =
+                      followerPt && followerPt.length === 3
+                        ? [followerPt[0], followerPt[1], followerPt[2]]
+                        : shared
+                          ? [shared[0], shared[1], shared[2]]
+                          : [e.point.x, e.point.y, e.point.z];
                     state.setSharedPointer(pt);
                     state.setActiveViewIndex(viewIndex);
                     state.addAnchor(pt);
