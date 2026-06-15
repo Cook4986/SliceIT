@@ -864,9 +864,18 @@ html, body, #root {
 .settings-close:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--color-border); }
 
 /* === Responsive === */
-/* Mid-width: let the toolbar wrap instead of overflowing the header */
+/* Mid-width: the 3-column grid (1fr auto 1fr) keeps the toolbar centered, but
+   once the side tracks get narrower than the logo it overflows and overlaps the
+   menu (grid tracks don't push each other). Below that point we collapse to a
+   single centered column so the logo stacks neatly above the toolbar instead. */
 @media (max-width: 1100px) {
-  .header { flex-wrap: wrap; row-gap: 8px; justify-content: center; }
+  .header {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    row-gap: 10px;
+  }
+  .header .logo,
+  .header .toolbar { justify-self: center; }
   .toolbar { flex-wrap: wrap; justify-content: center; }
 }
 

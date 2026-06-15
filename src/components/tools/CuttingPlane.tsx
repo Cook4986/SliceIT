@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useMemo } from 'react';
+import { useRef, useState, useEffect, useLayoutEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { TransformControls, Sphere, Line } from '@react-three/drei';
 import { useStore } from '../../store/useStore';
@@ -285,23 +285,35 @@ export function CuttingPlane({ isActive }: { isActive: boolean }) {
 
 // ── PlaneSurface ──────────────────────────────────────────────────────────────
 
+// Local-space crop direction: local Z is the plane normal and SUBTRACT removes
+// the −normal half-space, so the arrow points along local −Z. Because the
+// outline/edge/arrows are children of the mesh, they inherit its live transform
+// and we never have to re-derive these in world space.
+const PLANE_LOCAL_ORIGIN = new THREE.Vector3(0, 0, 0);
+const PLANE_LOCAL_REMOVED_DIR = new THREE.Vector3(0, 0, -1);
+
 function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick, onTransformChange }: any) {
   const meshRef = useRef<THREE.Mesh>(null);
   const { invalidate } = useThree();
+  const draggingRef = useRef(false);
   const size = planeSize || 3;
+  const h = size / 2;
 
-  // Crop-direction arrow: SUBTRACT removes the −normal half-space (the worker's
-  // half-space cutter extends along −normal), so that's the side the arrow marks.
-  // Local Z is the plane normal; transform it by the live orientation.
-  const removedDir = useMemo(
-    () => new THREE.Vector3(0, 0, 1).applyQuaternion(quaternion).negate(),
-    [quaternion]
-  );
+  // Transform is store-driven, but applied IMPERATIVELY rather than via
+  // controlled props. Binding position/quaternion as props re-applies the store
+  // value on every render — which fights three.js' rotate-gizmo math mid-drag
+  // and made the cut snap back to its deploy orientation. Instead we sync from
+  // the store only when this instance is NOT mid-drag; during a drag the gizmo
+  // owns the mesh transform and the outline/edge/arrows (its children) follow it
+  // live, in perfect lockstep with the pink fill.
+  useLayoutEffect(() => {
+    if (draggingRef.current || !meshRef.current) return;
+    meshRef.current.position.copy(center);
+    meshRef.current.quaternion.copy(quaternion);
+    meshRef.current.updateMatrixWorld();
+    invalidate();
+  }, [center, quaternion, invalidate]);
 
-  // Orientation is store-driven: the `quaternion` prop tracks
-  // tool.planeQuaternion, which the gizmo writes back on every change.
-  // Re-applying it on re-render is therefore idempotent during drags and
-  // keeps every viewport's instance (and the actual cut) in lockstep.
   const handleChange = () => {
     if (meshRef.current && onTransformChange) {
       const worldPos = new THREE.Vector3();
@@ -313,9 +325,12 @@ function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick, 
     invalidate();
   };
 
+  const handleDragStart = () => { draggingRef.current = true; };
+  const handleDragEnd = () => { draggingRef.current = false; };
+
   return (
     <group>
-      <mesh ref={meshRef} position={center} quaternion={quaternion}
+      <mesh ref={meshRef}
         onPointerDown={(e) => { e.stopPropagation(); onClick(); }}
       >
         <planeGeometry args={[size, size]} />
@@ -323,34 +338,44 @@ function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick, 
           color={MATERIALS.cutter.color} transparent opacity={0.18}
           side={THREE.DoubleSide} depthWrite={false}
         />
+
+        {/* Outline, edge and arrows are LOCAL-space children of the mesh, so the
+            gizmo transform moves them together with the fill — no store
+            round-trip, no desync on rotate. */}
+        {/* Full quad outline */}
+        <Line
+          points={[
+            new THREE.Vector3(-h, -h, 0),
+            new THREE.Vector3( h, -h, 0),
+            new THREE.Vector3( h,  h, 0),
+            new THREE.Vector3(-h,  h, 0),
+            new THREE.Vector3(-h, -h, 0),
+          ]}
+          color={COLORS.accent.pink} lineWidth={1.5} transparent opacity={0.4}
+        />
+        {/* Emboldened camera-facing edge (local X axis at y=0).
+            In ortho views, this is the edge the user drew — the only visible
+            part of the plane when viewed edge-on. */}
+        <Line
+          points={[
+            new THREE.Vector3(-h, 0, 0),
+            new THREE.Vector3( h, 0, 0),
+          ]}
+          color={COLORS.accent.cyan} lineWidth={4} transparent opacity={0.9}
+          depthWrite={false}
+        />
+        {/* Crop-direction indicator */}
+        <DirectionArrows center={PLANE_LOCAL_ORIGIN} removedDir={PLANE_LOCAL_REMOVED_DIR} length={size * 0.32} />
       </mesh>
-      {/* Full quad outline */}
-      <Line
-        points={[
-          new THREE.Vector3(-size/2, -size/2, 0).applyQuaternion(quaternion).add(center),
-          new THREE.Vector3( size/2, -size/2, 0).applyQuaternion(quaternion).add(center),
-          new THREE.Vector3( size/2,  size/2, 0).applyQuaternion(quaternion).add(center),
-          new THREE.Vector3(-size/2,  size/2, 0).applyQuaternion(quaternion).add(center),
-          new THREE.Vector3(-size/2, -size/2, 0).applyQuaternion(quaternion).add(center),
-        ]}
-        color={COLORS.accent.pink} lineWidth={1.5} transparent opacity={0.4}
-      />
-      {/* Emboldened camera-facing edge (local X axis at y=0).
-          In ortho views, this is the edge the user drew — the only visible
-          part of the plane when viewed edge-on. */}
-      <Line
-        points={[
-          new THREE.Vector3(-size/2, 0, 0).applyQuaternion(quaternion).add(center),
-          new THREE.Vector3( size/2, 0, 0).applyQuaternion(quaternion).add(center),
-        ]}
-        color={COLORS.accent.cyan} lineWidth={4} transparent opacity={0.9}
-        depthWrite={false}
-      />
-      {/* Crop-direction indicator */}
-      <DirectionArrows center={center} removedDir={removedDir} length={size * 0.32} />
 
       {isActive && meshRef.current && (
-        <TransformControls object={meshRef.current} mode={mode} onObjectChange={handleChange} />
+        <TransformControls
+          object={meshRef.current}
+          mode={mode}
+          onObjectChange={handleChange}
+          onMouseDown={handleDragStart}
+          onMouseUp={handleDragEnd}
+        />
       )}
     </group>
   );

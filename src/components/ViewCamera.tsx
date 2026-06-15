@@ -18,6 +18,7 @@ interface ViewCameraProps {
  */
 export function ViewCamera({ config, viewIndex }: ViewCameraProps) {
   const geometry = useStore(s => s.model.geometry);
+  const filename = useStore(s => s.model.filename);
   const activeViewIndex = useStore(s => s.activeViewIndex);
   const cameraSync = useStore(s => s.cameraSync);
   const setCameraSync = useStore(s => s.setCameraSync);
@@ -73,7 +74,11 @@ export function ViewCamera({ config, viewIndex }: ViewCameraProps) {
     invalidate();
   };
 
-  // Trigger fit on geometry change
+  // Frame the camera only when a NEW model is LOADED (filename changes).
+  // Slicing, undo and redo all replace model.geometry but keep the same
+  // filename — re-fitting on those would snap the viewing angle/zoom back to
+  // default mid-edit. Gating on filename keeps the user's framing stable
+  // throughout the cutting workflow.
   useEffect(() => {
     if (geometry) {
         fitCamera();
@@ -87,7 +92,14 @@ export function ViewCamera({ config, viewIndex }: ViewCameraProps) {
             clearTimeout(timeout);
         };
     }
-  }, [geometry]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filename]);
+
+  // Geometry swaps that aren't fresh loads (slice / undo / redo) must repaint
+  // the new mesh without touching the camera.
+  useEffect(() => {
+    if (geometry) invalidate();
+  }, [geometry, invalidate]);
 
   // Bug 1 fix: if geometry was already loaded before this Canvas View mounted
   // (happens because MainContent delays Canvas behind a requestAnimationFrame),
