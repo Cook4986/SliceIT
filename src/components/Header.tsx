@@ -32,24 +32,6 @@ export function Header() {
       </div>
 
       <Toolbar />
-
-      <div style={{ paddingRight: '20px' }}>
-        <a 
-          href="https://mncook.net" 
-          target="_blank" 
-          rel="noopener noreferrer"
-          style={{ 
-            color: '#ff00ff', 
-            textShadow: '0 0 5px #ff00ff, 0 0 10px #ff00ff, 0 0 20px #ff00ff', 
-            fontFamily: '"Impact", fantasy', 
-            fontSize: '1.2rem', 
-            textDecoration: 'none', 
-            letterSpacing: '2px' 
-          }}
-        >
-          mncook.net
-        </a>
-      </div>
     </header>
   );
 }

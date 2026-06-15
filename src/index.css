@@ -133,11 +133,17 @@ html, body, #root {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
   padding: 12px 24px;
   background: #3B20A1;
   border-bottom: 6px solid #1E1B4B;
   box-shadow: 0 4px 0 rgba(0,0,0,0.2);
 }
+
+/* Logo never collapses; the toolbar is the flexible element that wraps. */
+.header .logo { flex: 0 0 auto; }
+.header .toolbar { flex: 0 1 auto; min-width: 0; }
 
 .logo {
   font-family: var(--font-logo);
@@ -329,7 +335,17 @@ html, body, #root {
   color: var(--color-accent-cyan);
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  /* Wrap instead of overlapping when the three groups can't fit on one row. */
+  flex-wrap: wrap;
+  gap: 6px 16px;
   border-top: 4px solid #3B20A1;
+}
+
+/* Each group shrinks rather than forcing horizontal overflow/overlap. */
+.status-bar > div {
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .status-bar .github-link {
@@ -341,6 +357,24 @@ html, body, #root {
 
 .status-bar .github-link:hover {
   color: var(--color-accent-cyan);
+}
+
+/* mncook.net — moved out of the header to free space; styled to match the
+   console/status-bar footer (mono, muted, neon-cyan on hover). */
+.status-bar .site-link {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-decoration: none;
+  color: var(--color-text-muted);
+  transition: color 0.15s ease, text-shadow 0.15s ease;
+  white-space: nowrap;
+}
+
+.status-bar .site-link:hover {
+  color: var(--color-accent-cyan);
+  text-shadow: 0 0 8px rgba(34, 211, 238, 0.6);
 }
 
 /* === Empty State === */

@@ -1,10 +1,18 @@
 import * as THREE from 'three';
 import { MATERIALS } from '../../config/theme';
+import { DirectionArrows } from './DirectionArrows';
 
 /**
- * Plane cutter primitive.
- * Visually represents an infinite plane with an arrow indicating the cut direction.
+ * Plane cutter primitive — an infinite-ish cutting plane.
+ *
+ * The cut removes the plane's local +Y half-space (the GPU preview clips +Y and
+ * the worker is fed the negated local +Y as its normal), so the crop arrow marks
+ * +Y as the removed side. Rendered inside CuttingTool's transformed group, so
+ * local axes track the gizmo automatically.
  */
+const REMOVED_DIR = new THREE.Vector3(0, 1, 0);
+const ORIGIN = new THREE.Vector3(0, 0, 0);
+
 export function PlaneCutter() {
   return (
     <group>
@@ -19,16 +27,9 @@ export function PlaneCutter() {
           depthWrite={false}
         />
       </mesh>
-      
-      {/* Direction indicator (Arrow) */}
-      <mesh position={[0, 0.5, 0]}>
-        <cylinderGeometry args={[0, 0.1, 0.25, 16]} />
-        <meshBasicMaterial color={MATERIALS.cutterWireframe.color} />
-      </mesh>
-      <mesh position={[0, 0.25, 0]}>
-        <cylinderGeometry args={[0.02, 0.02, 0.5, 8]} />
-        <meshBasicMaterial color={MATERIALS.cutterWireframe.color} />
-      </mesh>
+
+      {/* Crop-direction indicator (mode-aware) */}
+      <DirectionArrows center={ORIGIN} removedDir={REMOVED_DIR} length={3} />
 
       {/* Grid helper on plane */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.001, 0]}>

@@ -6,6 +6,7 @@ import { MATERIALS, COLORS } from '../../config/theme';
 import { useThree } from '@react-three/fiber';
 import { VIEW_CONFIGS } from '../../config/viewConfigs';
 import { planeBasisQuaternion } from '../../utils/planeBasis';
+import { DirectionArrows } from './DirectionArrows';
 
 /**
  * CuttingPlane — Knife & Lasso tool visuals with a 3-stage interactive preview.
@@ -289,6 +290,14 @@ function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick, 
   const { invalidate } = useThree();
   const size = planeSize || 3;
 
+  // Crop-direction arrow: SUBTRACT removes the −normal half-space (the worker's
+  // half-space cutter extends along −normal), so that's the side the arrow marks.
+  // Local Z is the plane normal; transform it by the live orientation.
+  const removedDir = useMemo(
+    () => new THREE.Vector3(0, 0, 1).applyQuaternion(quaternion).negate(),
+    [quaternion]
+  );
+
   // Orientation is store-driven: the `quaternion` prop tracks
   // tool.planeQuaternion, which the gizmo writes back on every change.
   // Re-applying it on re-render is therefore idempotent during drags and
@@ -337,6 +346,9 @@ function PlaneSurface({ center, quaternion, isActive, mode, planeSize, onClick, 
         color={COLORS.accent.cyan} lineWidth={4} transparent opacity={0.9}
         depthWrite={false}
       />
+      {/* Crop-direction indicator */}
+      <DirectionArrows center={center} removedDir={removedDir} length={size * 0.32} />
+
       {isActive && meshRef.current && (
         <TransformControls object={meshRef.current} mode={mode} onObjectChange={handleChange} />
       )}
