@@ -413,6 +413,114 @@ html, body, #root {
   filter: drop-shadow(4px 4px 0 rgba(0,0,0,0.3));
 }
 
+/* === Mobile "Switch to Desktop" gate === */
+.mobile-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 10050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow-y: auto;
+  background: var(--color-bg-main);
+  background-image:
+    radial-gradient(circle at 50% 30%, #3B20A1 0%, #2D1B69 70%),
+    radial-gradient(rgba(255,255,255,0.05) 2px, transparent 0),
+    repeating-linear-gradient(45deg, transparent, transparent 18px, rgba(34, 211, 238, 0.04) 18px, rgba(34, 211, 238, 0.04) 20px),
+    repeating-linear-gradient(-45deg, transparent, transparent 18px, rgba(244, 114, 182, 0.04) 18px, rgba(244, 114, 182, 0.04) 20px);
+  background-size: 100% 100%, 36px 36px, 100% 100%, 100% 100%;
+}
+
+.mobile-gate-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 14px;
+  width: min(92vw, 380px);
+  padding: 32px 24px 26px;
+  background: var(--color-bg-panel);
+  border: 6px solid var(--color-border);
+  outline: 4px solid var(--color-accent-yellow);
+  border-radius: 28px;
+  box-shadow: 8px 8px 0 rgba(0,0,0,0.35);
+}
+
+/* Reuse the header's bouncing .logo / .logo-char animation, just sized for the card. */
+.mobile-gate-logo {
+  font-size: 28px;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+
+.mobile-gate-icon {
+  font-size: 64px;
+  line-height: 1;
+  filter: drop-shadow(4px 4px 0 rgba(0,0,0,0.3));
+  animation: logo-bounce 2.4s infinite ease-in-out;
+}
+
+.mobile-gate-title {
+  font-family: var(--font-heading);
+  font-size: 22px;
+  letter-spacing: 1px;
+  color: var(--color-accent-yellow);
+  text-shadow: 2px 2px 0 rgba(0,0,0,0.4);
+  margin: 2px 0;
+}
+
+.mobile-gate-body {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+}
+
+.mobile-gate-btn {
+  margin-top: 6px;
+  font-family: var(--font-logo);
+  font-size: 15px;
+  letter-spacing: 1px;
+  color: var(--color-text-dark);
+  background: var(--color-accent-lime);
+  border: 4px solid var(--color-border);
+  border-radius: 50px;
+  padding: 12px 22px;
+  cursor: pointer;
+  box-shadow: 0 4px 0 var(--color-border);
+  transition: all 100ms;
+}
+
+.mobile-gate-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 0 var(--color-border); }
+.mobile-gate-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--color-border); }
+
+.mobile-gate-hint {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.mobile-gate-github {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.mobile-gate-github:hover { color: var(--color-accent-cyan); }
+
 /* === Toast === */
 .toast-container {
   position: fixed;
